@@ -1,8 +1,10 @@
 import React, { useEffect, useState, useRef } from "react";
 import { fetchBuildings } from "./api";
-import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import * as THREE from "three";
+import { MapControls } from 'three/examples/jsm/controls/MapControls';
 
+// center of calgary
+const centerCalgary = { lat: 51.0447, lng: -114.0719 };
 
 function latLngToXY(lat, lng, width, height) {
   const x = (lng + 180) * (width / 360);
@@ -11,58 +13,89 @@ function latLngToXY(lat, lng, width, height) {
 }
 
 function plot_buildings(buildings, scene, width, height) {
+    const spacing = 30;
     for (let i = 0; i < buildings.length; i++) {
         let currentBuilding = buildings[i].polygon.coordinates[0];
         console.log("Current Building:", currentBuilding[0]);
-        const latLng = latLngToXY(currentBuilding[0][1], currentBuilding[0][0], width, height);
+        let x = currentBuilding[0][0];
+        let y = currentBuilding[0][1];
+        
+        x-= centerCalgary.lng;
+        y-= centerCalgary.lat;
+        
+        const latLng = latLngToXY(y*spacing, x*spacing, width, height);
+        console.log("LatLng to XY:", latLng);
 
-        let geometry = new THREE.BoxGeometry(.3, .3, 20); // Adjust size as needed
+        let geometry = new THREE.BoxGeometry(1, 1, 50); // Adjust size as needed
         const material = new THREE.MeshBasicMaterial({ color: 0x00ff00});
         const cube = new THREE.Mesh(geometry, material);
         cube.position.set(latLng.x, latLng.y, 10);
         scene.add(cube);
     }
-
 }
-
 
 function App() {
   const [buildings, setBuildings] = useState([]);
   const mountRef = useRef(null);
-  const sceneRef = useRef(null); // Optional: to reuse the scene
+  const sceneRef = useRef(null);
+  const rendererRef = useRef(null);
+  const cameraRef = useRef(null);
+  const controlsRef = useRef(null);
 
   useEffect(() => {
     const width = window.innerWidth;
     const height = window.innerHeight;
+    const aspect = width / height;
+    const mount = mountRef.current;
 
-    const mount = mountRef.current; // Copy to local variable
-
-    // Set up basic Three.js
+    // Scene setup
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
-    camera.position.z = 200;
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(width, height);
-    mount.appendChild(renderer.domElement);
-
     sceneRef.current = scene;
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;       // Optional, for smoother movement
-    controls.dampingFactor = 0.05;
-    controls.screenSpacePanning = false;
-    controls.minDistance = 10;
-    controls.maxDistance = 500;
+    // Orthographic camera for flat map panning and zooming
+    // View size can be adjusted (e.g., 500 units visible)
+    const viewSize = 500;
+    const camera = new THREE.OrthographicCamera(
+      (-aspect * viewSize) / 2,
+      (aspect * viewSize) / 2,
+      viewSize / 2,
+      -viewSize / 2,
+      0.1,
+      2000
+    );
+    camera.position.set(0, 0, 1000); // Pull camera away from flat plane
+    camera.lookAt(0, 0, 0);
+    cameraRef.current = camera;
 
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(width, height);
+    mountRef.current.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    // Controls for pan/zoom on flat map
+    const controls = new MapControls(camera, renderer.domElement);
+    controls.enableDamping = false; // You can set true for smooth feel
+    controls.dampingFactor = 0.05;
+    controls.screenSpacePanning = true; // Important for map-style panning
+    controls.minZoom = 0.5;
+    controls.maxZoom = 5;
+    controls.panSpeed = 0.5; // Slow pan
+    controlsRef.current = controls;
+
+    // Optional: Add a grid helper for reference
+    const gridHelper = new THREE.GridHelper(1000, 50);
+    gridHelper.rotation.x = Math.PI / 2;
+    gridHelper.position.set(0, 0, 0);
+    scene.add(gridHelper);
+
+    // Animation loop
     const animate = () => {
       requestAnimationFrame(animate);
+      controls.update();
       renderer.render(scene, camera);
     };
     animate();
-
-    camera.position.z = 40;
-
 
     // Clean up on unmount
     return () => {
@@ -71,25 +104,38 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (buildings.length && sceneRef.current) {
+      // Clear previous buildings
+      while (sceneRef.current.children.length > 0) {
+        sceneRef.current.remove(sceneRef.current.children[0]);
+      }
+      // Add grid helper back after clearing
+      const gridHelper = new THREE.GridHelper(1000, 50);
+      gridHelper.rotation.x = Math.PI / 2;
+        gridHelper.position.set(0, 0, -15);
+
+      sceneRef.current.add(gridHelper);
+
+      // Plot buildings on flat map
+      plot_buildings(buildings, sceneRef.current, window.innerWidth, window.innerHeight);
+    }
+  }, [buildings]);
+
+  useEffect(() => {
     fetchBuildings()
-      .then((data) => {
-        setBuildings(data);
-        if (sceneRef.current) {
-          plot_buildings(data, sceneRef.current, window.innerWidth, window.innerHeight);
-        }
-      })
-      .catch((err) => {
-        console.error("Failed to fetch:", err);
-      });
+      .then((data) => setBuildings(data))
+      .catch((err) => console.error("Failed to fetch buildings:", err));
   }, []);
 
   return (
     <div>
-      <h1>Building Data</h1>
-      <div ref={mountRef} style={{ width: "100vw", height: "100vh", position: "absolute", zIndex: 0 }} />
-      <ul style={{ position: "relative", zIndex: 1, backgroundColor: "white", padding: 20 }}>
-      </ul>
+      <h1>Flat Map with Buildings</h1>
+      <div
+        ref={mountRef}
+        style={{ width: "100vw", height: "100vh", position: "absolute", zIndex: 0 }}
+      />
     </div>
   );
 }
+
 export default App;
