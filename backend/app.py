@@ -141,8 +141,9 @@ def extract_filter_nlp_patterns(user_query):
 
 app = Flask(__name__)
 
-# Configure CORS
-CORS(app, origins=["https://calgary-map-frontend.onrender.com", "https://localhost:3000"], supports_credentials=True)
+# Configure CORS - Allow all origins for Render deployment
+# This is needed because Render can assign different subdomains
+CORS(app, origins="*", supports_credentials=True)
 
 # API Configuration from environment variables
 CALGARY_LAND_USE_API = os.getenv('CALGARY_LAND_USE_API', 'https://data.calgary.ca/resource/mw9j-jik5.json')
@@ -160,6 +161,44 @@ buildings_cache = {
 
 # Cache duration in seconds (e.g., 1 hour)
 CACHE_DURATION = 3600
+
+@app.route('/')
+def health_check():
+    """Health check endpoint"""
+    return jsonify({
+        "status": "healthy",
+        "message": "Calgary Map API is running",
+        "endpoints": [
+            "/api/buildings",
+            "/api/buildings-with-land-use",
+            "/api/filter-buildings",
+            "/api/land-use",
+            "/api/filters/save",
+            "/api/filters/load",
+            "/api/filters/delete",
+            "/api/filters/list"
+        ]
+    })
+
+@app.route('/api')
+def api_info():
+    """API information endpoint"""
+    return jsonify({
+        "message": "Calgary Map API",
+        "version": "1.0",
+        "endpoints": {
+            "buildings": "/api/buildings",
+            "buildings_with_land_use": "/api/buildings-with-land-use",
+            "filter_buildings": "/api/filter-buildings",
+            "land_use": "/api/land-use",
+            "filters": {
+                "save": "/api/filters/save",
+                "load": "/api/filters/load",
+                "delete": "/api/filters/delete",
+                "list": "/api/filters/list"
+            }
+        }
+    })
 
 # Prepare parameters for authenticated requests
 def get_api_params(base_params=None):
