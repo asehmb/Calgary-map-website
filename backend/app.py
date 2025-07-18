@@ -16,14 +16,14 @@ def extract_filter_with_llm(user_query):
     
     
     # Try pattern matching for natural language
-    nlp_result = extract_filter_nlp_patterns(user_query)
-    if nlp_result:
-        print(f"NLP pattern matching worked: {nlp_result}")
-        return nlp_result
+    # nlp_result = extract_filter_nlp_patterns(user_query)
+    # if nlp_result:
+    #     print(f"NLP pattern matching worked: {nlp_result}")
+    #     return nlp_result
     
     # Get Hugging Face API token from environment
     hf_token = os.getenv('HUGGINGFACE_API_TOKEN')
-    if not hf_token or hf_token == 'your_hf_token_here':
+    if not hf_token:
         print("Warning: No Hugging Face API token found, all parsing methods failed")
         return None
     
@@ -38,7 +38,14 @@ def extract_filter_with_llm(user_query):
         
         api_url = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium"
         
-        prompt = f"Convert this to JSON with attribute, operator, value: {user_query}. Available attributes: rooftop_elev_z, grd_elev_min_z. Output JSON only:"
+        prompt = f"""Convert this to JSON with attribute, operator, value: {user_query}. Available attributes: 
+        height - height of the building from the roof to the ground
+        rooftop_elev_z - height of roof above sea level
+        grd_elev_min_z - minimum ground elevation above sea level
+        grd_elev_max_z - maximum ground elevation above sea level
+        land_use - land use code of the building
+        return json as {{"attribute": "height", "operator": ">", "value": 50}}.
+        . Output JSON only:"""
         
         payload = {
             "inputs": prompt,
@@ -80,21 +87,21 @@ def extract_filter_nlp_patterns(user_query):
     # Pattern matching for common phrases
     patterns = [
         # "tall buildings" or "height above X" or "above X meters" - use rooftop elevation as proxy for height
-        (r'(?:tall|height|elevation).*?(?:above|over|greater than|>)\s*(\d+(?:\.\d+)?)', 'rooftop_elev_z', '>'),
-        (r'(?:above|over)\s*(\d+(?:\.\d+)?)\s*(?:meters?|m)', 'rooftop_elev_z', '>'),
+        (r'(?:tall|height|elevation).*?(?:above|over|greater than|>)\s*(\d+(?:\.\d+)?)', 'height', '>'),
+        (r'(?:above|over)\s*(\d+(?:\.\d+)?)\s*(?:meters?|m)', 'height', '>'),
         # "short buildings" or "height below X"  
-        (r'(?:short|low|height|elevation).*?(?:below|under|less than|<)\s*(\d+(?:\.\d+)?)', 'rooftop_elev_z', '<'),
-        (r'(?:below|under)\s*(\d+(?:\.\d+)?)\s*(?:meters?|m)', 'rooftop_elev_z', '<'),
+        (r'(?:short|low|height|elevation).*?(?:below|under|less than|<)\s*(\d+(?:\.\d+)?)', 'height', '<'),
+        (r'(?:below|under)\s*(\d+(?:\.\d+)?)\s*(?:meters?|m)', 'height', '<'),
         # "ground level above X"
         (r'(?:ground|base).*?(?:above|over|>)\s*(\d+(?:\.\d+)?)', 'grd_elev_min_z', '>'),
         # "ground level below X"
         (r'(?:ground|base).*?(?:below|under|<)\s*(\d+(?:\.\d+)?)', 'grd_elev_min_z', '<'),
         # "buildings taller than X"
-        (r'(?:buildings?|structures?).*?(?:taller|higher).*?(?:than|>)\s*(\d+(?:\.\d+)?)', 'rooftop_elev_z', '>'),
+        (r'(?:buildings?|structures?).*?(?:taller|higher).*?(?:than|>)\s*(\d+(?:\.\d+)?)', 'height', '>'),
         # "buildings shorter than X"
-        (r'(?:buildings?|structures?).*?(?:shorter|lower).*?(?:than|<)\s*(\d+(?:\.\d+)?)', 'rooftop_elev_z', '<'),
+        (r'(?:buildings?|structures?).*?(?:shorter|lower).*?(?:than|<)\s*(\d+(?:\.\d+)?)', 'height', '<'),
         # Simple "X meters" (assume height)
-        (r'(\d+(?:\.\d+)?)\s*(?:meters?|m)', 'rooftop_elev_z', '>'),
+        (r'(\d+(?:\.\d+)?)\s*(?:meters?|m)', 'height', '>'),
     ]
     
     print(f"Trying to match patterns for: '{query}'")
@@ -135,6 +142,11 @@ def get_api_params(base_params=None):
 def process_buildings(buildings):
     processed = []
     for building in buildings:
+        # Calculate building height
+        rooftop_z = float(building.get("rooftop_elev_z") or 0)
+        ground_z = float(building.get("grd_elev_min_z") or 0)
+        height = rooftop_z - ground_z if rooftop_z and ground_z else 0
+        
         processed.append({
             "grd_elev_min_x": building.get("grd_elev_min_x"),
             "grd_elev_max_x": building.get("grd_elev_max_x"),
@@ -145,6 +157,8 @@ def process_buildings(buildings):
             "rooftop_elev_x": building.get("rooftop_elev_x"),
             "rooftop_elev_y": building.get("rooftop_elev_y"),
             "rooftop_elev_z": building.get("rooftop_elev_z"),
+            "height": height,  # Add calculated height field
+            "land_use": building.get("land_use"),
             "polygon": building.get("polygon"),  # coordinates in GeoJSON format
         })
     return processed

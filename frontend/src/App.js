@@ -84,17 +84,19 @@ function plot_buildings(buildings, scene) {
         const xMeters = measure(center.lat, center.lng, center.lat, longitude) * (longitude > center.lng ? 1 : -1) * sceneScale;
         const yMeters = measure(center.lat, center.lng, latitude, center.lng) * (latitude > center.lat ? 1 : -1) * sceneScale;
 
-        // Store coordinates back on the building object
+
+        const heightInMeters = building.rooftop_elev_z - building.grd_elev_min_z || 50;
+        const heightValue = heightInMeters * sceneScale;
+                // Store coordinates back on the building object
         building.calculatedCoords = {
             longitude: longitude,
             latitude: latitude,
             xMeters: xMeters,
             yMeters: yMeters,
-            sceneScale: sceneScale
         };
+        building.height = heightInMeters; // Store height for easy access
+        building.landUse = building.land_use || null; // Ensure land use is available
 
-        const heightInMeters = building.rooftop_elev_z - building.grd_elev_min_z || 50;
-        const heightValue = heightInMeters * sceneScale;
         const land_use = building.land_use; // Land use now comes with the building data
         const landUseColor = 0xffefed; // Default color if not found
 
@@ -297,7 +299,7 @@ function App() {
             type="text"
             value={filterQuery}
             onChange={(e) => setFilterQuery(e.target.value)}
-            placeholder="e.g., tall buildings above 1150"
+            placeholder="e.g., tall buildings above 50"
             style={{
               flex: 1,
               padding: '8px',
@@ -341,7 +343,7 @@ function App() {
           Showing {buildings.length} of {allBuildings.length} buildings
         </div>
         <div style={{ fontSize: '11px', color: '#999', marginTop: '4px' }}>
-          Examples: "tall buildings above 1150", "rooftop_elev_z {'>'}  1200", "ground level above 1049"
+          Examples: "tall buildings above 50", "height below 30", "ground level above 1049"
         </div>
       </div>
 
