@@ -8,9 +8,13 @@ from dotenv import load_dotenv
 from geojson import Point
 from shapely.geometry import shape, Point as ShapelyPoint
 from huggingface_hub.inference_api import InferenceApi
+from db import init_db, save_filters, load_filters, delete_filters, get_user_filter_names
 
 # Load environment variables
 load_dotenv()
+
+# Initialize database
+init_db()
 
 
 def extract_filter_with_llm(user_query):
@@ -312,10 +316,12 @@ def filter_buildings():
     
     buildings = get_cached_processed_buildings(limit=1000, bbox=downtown_bbox)
     
+    # Store results per filter for color mapping
+    filter_results = []
     all_matched_ids = set()  # Use set to avoid duplicates
     
     # loop through all queries for multiple queries
-    for query in queries_to_process:
+    for query_index, query in enumerate(queries_to_process):
         print(f"Processing query: '{query}'")
         
         filter_criteria = extract_filter_with_llm(query)
@@ -350,6 +356,11 @@ def filter_buildings():
 
         # Find matches for this query
         query_matches = [b.get("id") for b in buildings if matches(b)]
+        filter_results.append({
+            "query": query,
+            "filter_index": query_index,
+            "matches": query_matches
+        })
         all_matched_ids.update(query_matches)
         print(f"Query '{query}' found {len(query_matches)} matches")
     
@@ -357,7 +368,13 @@ def filter_buildings():
     print(f"Total unique matches across all queries: {len(final_matches)}")
     print(f"Matched building IDs: {final_matches}")
     
-    return jsonify(final_matches)
+    # Return both individual filter results and combined results
+    response = {
+        "all_matches": final_matches,
+        "filter_results": filter_results
+    }
+    
+    return jsonify(response)
 
 @app.route('/api/land-use', methods=['GET'])
 def get_land_use():
@@ -506,6 +523,100 @@ def cache_status():
         status['processed_data_count'] = len(buildings_cache['processed_data'])
     
     return jsonify(status)
+
+# Filter management endpoints
+@app.route('/api/filters/save', methods=['POST'])
+def save_user_filters():
+    """Save filters for a user"""
+    try:
+        data = request.get_json()
+        username = data.get('username', '').strip()
+        filter_name = data.get('filter_name', '').strip()
+        filters_data = data.get('filters', [])
+        
+        if not username:
+            return jsonify({"success": False, "error": "Username is required"}), 400
+        if not filter_name:
+            return jsonify({"success": False, "error": "Filter name is required"}), 400
+        if not filters_data:
+            return jsonify({"success": False, "error": "Filters data is required"}), 400
+        
+        result = save_filters(username, filter_name, filters_data)
+        
+        if result["success"]:
+            return jsonify(result), 200
+        else:
+            return jsonify(result), 500
+            
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/filters/load', methods=['GET'])
+def load_user_filters():
+    """Load filters for a user"""
+    try:
+        username = request.args.get('username', '').strip()
+        filter_name = request.args.get('filter_name', '').strip()
+        
+        if not username:
+            return jsonify({"success": False, "error": "Username is required"}), 400
+        
+        if filter_name:
+            # Load specific filter set
+            result = load_filters(username, filter_name)
+        else:
+            # Load all filter sets for user
+            result = load_filters(username)
+        
+        if result["success"]:
+            return jsonify(result), 200
+        else:
+            return jsonify(result), 404 if "not found" in result.get("error", "").lower() else 500
+            
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/filters/delete', methods=['DELETE'])
+def delete_user_filters():
+    """Delete a filter set for a user"""
+    try:
+        data = request.get_json()
+        username = data.get('username', '').strip()
+        filter_name = data.get('filter_name', '').strip()
+        
+        if not username:
+            return jsonify({"success": False, "error": "Username is required"}), 400
+        if not filter_name:
+            return jsonify({"success": False, "error": "Filter name is required"}), 400
+        
+        result = delete_filters(username, filter_name)
+        
+        if result["success"]:
+            return jsonify(result), 200
+        else:
+            return jsonify(result), 404 if "not found" in result.get("error", "").lower() else 500
+            
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/filters/list', methods=['GET'])
+def list_user_filters():
+    """Get all filter names for a user"""
+    try:
+        username = request.args.get('username', '').strip()
+        
+        if not username:
+            return jsonify({"success": False, "error": "Username is required"}), 400
+        
+        result = get_user_filter_names(username)
+        
+        if result["success"]:
+            return jsonify(result), 200
+        else:
+            return jsonify(result), 500
+            
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 if __name__ == "__main__":
     # Load environment variables for development

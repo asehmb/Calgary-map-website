@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { fetchBuildings, fetchLandUse, filterBuildings, filterBuildingsMultiple } from "./api";
+import { fetchBuildings, fetchLandUse, filterBuildings, filterBuildingsMultiple, saveFilters, loadFilters, deleteFilters, listUserFilters } from "./api";
 import * as THREE from "three";
 import { MapControls } from 'three/examples/jsm/controls/MapControls';
 
@@ -155,6 +155,16 @@ function App() {
   const [nextFilterId, setNextFilterId] = useState(1);
   const [isFiltering, setIsFiltering] = useState(false);
   const [buildingsLoaded, setBuildingsLoaded] = useState(false); // Trigger for re-render
+  
+  // Filter management state
+  const [username, setUsername] = useState('');
+  const [filterName, setFilterName] = useState('');
+  const [savedFilters, setSavedFilters] = useState([]);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [showLoadDialog, setShowLoadDialog] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  
   const mountRef = useRef(null);
   const sceneRef = useRef(null);
   const rendererRef = useRef(null);
@@ -326,13 +336,22 @@ function App() {
       
       // Process all filters - use batch processing if multiple filters
       let allFilteredResults = [];
+      let filterResults = []; // Store which buildings match which filters
       
       if (activeFilters.length === 1) {
-        // Single filter - use existing API
+        // Single filter - use existing API (keep backward compatibility)
         try {
           const filteredData = await filterBuildings(activeFilters[0].query);
           console.log(`Single filter "${activeFilters[0].query}" returned:`, filteredData);
-          allFilteredResults = filteredData;
+          
+          // Handle both old format (array) and new format (object)
+          if (Array.isArray(filteredData)) {
+            allFilteredResults = filteredData;
+            filterResults = [{ filter_index: 0, matches: filteredData, query: activeFilters[0].query }];
+          } else {
+            allFilteredResults = filteredData.all_matches || [];
+            filterResults = filteredData.filter_results || [];
+          }
         } catch (error) {
           console.error(`Filter "${activeFilters[0].query}" failed:`, error);
         }
@@ -342,15 +361,28 @@ function App() {
           const queryStrings = activeFilters.map(f => f.query);
           const filteredData = await filterBuildingsMultiple(queryStrings);
           console.log(`Multiple filters returned:`, filteredData);
-          allFilteredResults = filteredData;
+          
+          // Handle both old format (array) and new format (object)
+          if (Array.isArray(filteredData)) {
+            // Fallback: old format, treat as combined results
+            allFilteredResults = filteredData;
+            filterResults = [{ filter_index: 0, matches: filteredData, query: "combined" }];
+          } else {
+            // New format with per-filter results
+            allFilteredResults = filteredData.all_matches || [];
+            filterResults = filteredData.filter_results || [];
+          }
         } catch (error) {
           console.error('Multiple filters failed:', error);
           // Fallback to individual filter processing
-          for (const filter of activeFilters) {
+          for (let i = 0; i < activeFilters.length; i++) {
+            const filter = activeFilters[i];
             try {
               const filteredData = await filterBuildings(filter.query);
               console.log(`Filter "${filter.query}" returned:`, filteredData);
-              allFilteredResults.push(...filteredData);
+              const matches = Array.isArray(filteredData) ? filteredData : (filteredData.all_matches || []);
+              allFilteredResults.push(...matches);
+              filterResults.push({ filter_index: i, matches: matches, query: filter.query });
             } catch (error) {
               console.error(`Filter "${filter.query}" failed:`, error);
             }
@@ -361,36 +393,49 @@ function App() {
       }
       
       console.log("Final filtered buildings:", allFilteredResults);
+      console.log("Filter results by filter:", filterResults);
       
-      // Highlight the filtered buildings
+      // Highlight buildings with different colors per filter
       let highlightedCount = 0;
       const colors = [0xff4444, 0x44ff44, 0x4444ff, 0xffff44, 0xff44ff, 0x44ffff]; // Multiple colors for different filters
       
-      for (let i = 0; i < allFilteredResults.length; i++) {
-        const buildingId = allFilteredResults[i];
-        console.log("Looking for building ID:", buildingId, "Type:", typeof buildingId);
-        const building = buildings_dict.current.get(buildingId);
-        if (building) {
-          building.colour = colors[highlightedCount % colors.length]; // Cycle through colors
-          building.isHighlighted = true;
-          highlightedCount++;
-        } else {
-          console.warn("Building not found in dictionary:", buildingId);
-          // Try converting to string/number in case of type mismatch
-          const stringId = String(buildingId);
-          const numberId = Number(buildingId);
-          const buildingStr = buildings_dict.current.get(stringId);
-          const buildingNum = buildings_dict.current.get(numberId);
-          if (buildingStr) {
-            console.log("Found building with string ID:", stringId);
-            buildingStr.colour = colors[highlightedCount % colors.length];
-            buildingStr.isHighlighted = true;
-            highlightedCount++;
-          } else if (buildingNum) {
-            console.log("Found building with number ID:", numberId);
-            buildingNum.colour = colors[highlightedCount % colors.length];
-            buildingNum.isHighlighted = true;
-            highlightedCount++;
+      // First, apply colors based on which filter matched each building
+      for (const filterResult of filterResults) {
+        const filterIdx = activeFilters.findIndex(f => f.query === filterResult.query);
+        const filterColor = colors[filterIdx % colors.length];
+
+        
+        for (const buildingId of filterResult.matches) {
+          const building = buildings_dict.current.get(buildingId);
+          if (building) {
+            // If building is already highlighted by a previous filter, keep the first filter's color
+            if (!building.isHighlighted) {
+              building.colour = filterColor;
+              building.isHighlighted = true;
+              building.filterIndex = filterIdx; // Track which filter matched it
+              highlightedCount++;
+              console.log(`Building ${buildingId} highlighted with color ${filterColor.toString(16)} from filter ${filterResult.filter_index}`);
+            } else {
+              console.log(`Building ${buildingId} already highlighted, keeping original color`);
+            }
+          } else {
+            console.warn("Building not found in dictionary:", buildingId);
+            // Try converting to string/number in case of type mismatch
+            const stringId = String(buildingId);
+            const numberId = Number(buildingId);
+            const buildingStr = buildings_dict.current.get(stringId);
+            const buildingNum = buildings_dict.current.get(numberId);
+            if (buildingStr && !buildingStr.isHighlighted) {
+              buildingStr.colour = filterColor;
+              buildingStr.isHighlighted = true;
+              buildingStr.filterIndex = filterIdx;
+              highlightedCount++;
+            } else if (buildingNum && !buildingNum.isHighlighted) {
+              buildingNum.colour = filterColor;
+              buildingNum.isHighlighted = true;
+              buildingNum.filterIndex = filterIdx;
+              highlightedCount++;
+            }
           }
         }
       }
@@ -422,127 +467,305 @@ function App() {
     setTimeout(() => setBuildingsLoaded(prev => !prev), 50);
   };
 
-  return (
+  // Filter management functions
+  const handleSaveFilters = async () => {
+    if (!username.trim()) {
+      alert('Please enter a username');
+      return;
+    }
+    if (!filterName.trim()) {
+      alert('Please enter a filter name');
+      return;
+    }
+    
+    const activeFilters = filters.filter(f => f.query.trim());
+    if (activeFilters.length === 0) {
+      alert('Please add at least one filter before saving');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const result = await saveFilters(username, filterName, activeFilters);
+      if (result.success) {
+        alert(`Filters ${result.action} successfully!`);
+        setFilterName('');
+        setShowSaveDialog(false);
+        // Refresh the saved filters list
+        loadUserFiltersList();
+      } else {
+        alert(`Error saving filters: ${result.error}`);
+      }
+    } catch (error) {
+      alert(`Error saving filters: ${error.message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleLoadFilters = async (filterSetName) => {
+    if (!username.trim()) {
+      alert('Please enter a username');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const result = await loadFilters(username, filterSetName);
+      if (result.success) {
+        // Convert loaded filters to the correct format
+        const loadedFilters = result.filters.map((filter, index) => ({
+          id: index,
+          query: filter.query
+        }));
+        
+        setFilters(loadedFilters);
+        setNextFilterId(loadedFilters.length);
+        setShowLoadDialog(false);
+        
+        // Reset current highlights first
+        for (const building of buildings_dict.current.values()) {
+          building.colour = 0xcccccc;
+          building.isHighlighted = false;
+        }
+        setHighlightedBuildings([]);
+        
+        alert('Filters loaded successfully!');
+      } else {
+        alert(`Error loading filters: ${result.error}`);
+      }
+    } catch (error) {
+      alert(`Error loading filters: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loadUserFiltersList = async () => {
+    if (!username.trim()) return;
+    
+    try {
+      const result = await listUserFilters(username);
+      if (result.success) {
+        setSavedFilters(result.filter_names);
+      } else {
+        console.error('Error loading filter list:', result.error);
+      }
+    } catch (error) {
+      console.error('Error loading filter list:', error.message);
+    }
+  };
+
+  const handleDeleteFilters = async (filterSetName) => {
+    if (!username.trim()) return;
+    
+    if (!window.confirm(`Are you sure you want to delete the filter set "${filterSetName}"?`)) {
+      return;
+    }
+
+    try {
+      const result = await deleteFilters(username, filterSetName);
+      if (result.success) {
+        alert('Filter set deleted successfully!');
+        loadUserFiltersList(); // Refresh the list
+      } else {
+        alert(`Error deleting filters: ${result.error}`);
+      }
+    } catch (error) {
+      alert(`Error deleting filters: ${error.message}`);
+    }
+  };
+
+  // Load user's saved filters when username changes
+  useEffect(() => {
+    if (username.trim()) {
+      loadUserFiltersList();
+    }
+  }, [username]);
+
+return (
     <div>
-      {/* Filter Controls */}
-      <div style={{
-        position: 'absolute',
-        top: '10px',
-        left: '10px',
-        zIndex: 1000,
-        background: 'rgba(255, 255, 255, 0.9)',
-        padding: '15px',
-        borderRadius: '8px',
-        boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
-        minWidth: '350px',
-        maxHeight: '80vh',
-        overflowY: 'auto'
-      }}>
-        <h3 style={{ margin: '0 0 10px 0', fontSize: '16px' }}>Multiple Filters</h3>
-        
-        {/* Filter Inputs */}
-        {filters.map((filter, index) => (
-          <div key={filter.id} style={{ 
-            display: 'flex', 
-            gap: '8px', 
-            alignItems: 'center', 
-            marginBottom: '8px',
-            padding: '8px',
-            background: 'rgba(240, 240, 240, 0.5)',
-            borderRadius: '4px'
-          }}>
-            <span style={{ 
-              minWidth: '20px', 
-              fontSize: '12px', 
-              color: '#666',
-              fontWeight: 'bold'
+            <div style={{
+                    position: 'absolute',
+                    top: '10px',
+                    right: '10px',
+                    zIndex: 1000,
+                    background: 'rgba(255, 255, 255, 0.9)',
+                    padding: '15px',
+                    borderRadius: '8px',
+                    boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+                    minWidth: '350px',
+                    maxHeight: '80vh',
+                    overflowY: 'auto'
             }}>
-              {index + 1}:
-            </span>
-            <input
-              type="text"
-              value={filter.query}
-              onChange={(e) => updateFilter(filter.id, e.target.value)}
-              placeholder="e.g., tall buildings above 50"
-              style={{
-                flex: 1,
-                padding: '6px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '13px'
-              }}
-              onKeyPress={(e) => e.key === 'Enter' && handleFilter()}
-            />
-            {filters.length > 1 && (
-              <button
-                onClick={() => removeFilter(filter.id)}
-                style={{
-                  padding: '4px 8px',
-                  backgroundColor: '#dc3545',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '3px',
-                  cursor: 'pointer',
-                  fontSize: '12px'
-                }}
-              >
-                ×
-              </button>
-            )}
-          </div>
-        ))}
-        
-        {/* Action Buttons */}
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '10px' }}>
-          <button
-            onClick={addFilter}
-            style={{
-              padding: '6px 12px',
-              backgroundColor: '#28a745',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '13px'
-            }}
-          >
-            + Add Filter
-          </button>
-          <button
-            onClick={handleFilter}
-            disabled={isFiltering}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: '#007bff',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: isFiltering ? 'not-allowed' : 'pointer',
-              fontSize: '14px',
-              fontWeight: 'bold'
-            }}
-          >
-            {isFiltering ? 'Filtering...' : 'Apply Filters'}
-          </button>
-          <button
-            onClick={handleResetFilter}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: '#6c757d',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '14px'
-            }}
-          >
-            Reset All
-          </button>
-        </div>
-        
-        <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
-          Showing {buildings.length} buildings total, {highlightedBuildings.length} highlighted
-        </div>
+                    <input
+                            type="text"
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                            placeholder="enter username"
+                            style={{
+                                    width: '90%',
+                                    padding: '5%',
+                                    border: '1px solid #ddd',
+                                    borderRadius: '4px',
+                                    fontSize: '14px'
+                            }}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px' }}>
+                    <button
+                        onClick={() => setShowSaveDialog(true)}
+                        disabled={!username.trim() || filters.filter(f => f.query.trim()).length === 0}
+                        style={{
+                        padding: '8px 16px',
+                        backgroundColor: !username.trim() || filters.filter(f => f.query.trim()).length === 0 ? '#ccc' : '#007bff',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        fontSize: '14px',
+                        fontWeight: 'bold',
+                        width: '49.5%',
+                        cursor: !username.trim() || filters.filter(f => f.query.trim()).length === 0 ? 'not-allowed' : 'pointer'
+                        }}
+                    >
+                        Save Filters
+                    </button>
+                    <button
+                        onClick={() => setShowLoadDialog(true)}
+                        disabled={!username.trim()}
+                        style={{
+                        padding: '8px 16px',
+                        backgroundColor: !username.trim() ? '#ccc' : '#28a745',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        fontSize: '14px',
+                        fontWeight: 'bold',
+                        width: '49.5%',
+                        cursor: !username.trim() ? 'not-allowed' : 'pointer'
+                        }}
+                    >
+                        Load Filters
+                    </button>
+                    </div>
+
+            </div>
+        {/* Filter Controls */}
+        <div style={{
+            position: 'absolute',
+            bottom: '10px',
+            right: '10px',
+            zIndex: 1000,
+            background: 'rgba(255, 255, 255, 0.9)',
+            padding: '15px',
+            borderRadius: '8px',
+            boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+            minWidth: '350px',
+            maxHeight: '80vh',
+            overflowY: 'auto'
+        }}>
+            <h3 style={{ margin: '0 0 10px 0', fontSize: '16px' }}>Multiple Filters</h3>
+            
+            {/* Filter Inputs */}
+            {filters.map((filter, index) => (
+                <div key={filter.id} style={{ 
+                    display: 'flex', 
+                    gap: '8px', 
+                    alignItems: 'center', 
+                    marginBottom: '8px',
+                    padding: '8px',
+                    background: 'rgba(240, 240, 240, 0.5)',
+                    borderRadius: '4px'
+                }}>
+                    <span style={{ 
+                        minWidth: '20px', 
+                        fontSize: '12px', 
+                        color: '#666',
+                        fontWeight: 'bold'
+                    }}>
+                        {index + 1}:
+                    </span>
+                    <input
+                        type="text"
+                        value={filter.query}
+                        onChange={(e) => updateFilter(filter.id, e.target.value)}
+                        placeholder="e.g., tall buildings above 50"
+                        style={{
+                            flex: 1,
+                            padding: '6px',
+                            border: '1px solid #ddd',
+                            borderRadius: '4px',
+                            fontSize: '13px'
+                        }}
+                        onKeyPress={(e) => e.key === 'Enter' && handleFilter()}
+                    />
+                    {filters.length > 1 && (
+                        <button
+                            onClick={() => removeFilter(filter.id)}
+                            style={{
+                                padding: '4px 8px',
+                                backgroundColor: '#dc3545',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '3px',
+                                cursor: 'pointer',
+                                fontSize: '12px'
+                            }}
+                        >
+                            ×
+                        </button>
+                    )}
+                </div>
+            ))}
+            
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '10px' }}>
+                <button
+                    onClick={addFilter}
+                    style={{
+                        padding: '6px 12px',
+                        backgroundColor: '#28a745',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '13px'
+                    }}
+                >
+                    + Add Filter
+                </button>
+                <button
+                    onClick={handleFilter}
+                    disabled={isFiltering}
+                    style={{
+                        padding: '8px 16px',
+                        backgroundColor: '#007bff',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: isFiltering ? 'not-allowed' : 'pointer',
+                        fontSize: '14px',
+                        fontWeight: 'bold'
+                    }}
+                >
+                    {isFiltering ? 'Filtering...' : 'Apply Filters'}
+                </button>
+                <button
+                    onClick={handleResetFilter}
+                    style={{
+                        padding: '8px 16px',
+                        backgroundColor: '#6c757d',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '14px'
+                    }}
+                >
+                    Reset All
+                </button>
+            </div>
+            
+            <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}></div>
         <div style={{ fontSize: '11px', color: '#999', marginTop: '4px' }}>
           Examples: "height above 100", "tall buildings above 50", "ground level above 1049"
         </div>
@@ -671,6 +894,198 @@ function App() {
             {!selectedBuilding.landUse?.lu_code && !selectedBuilding.building.land_use?.lu_code && (
               <><strong>Land Use:</strong> No zoning data found<br/></>
             )}
+          </div>
+        </div>
+      )}
+      
+      {/* Save Filters Dialog */}
+      {showSaveDialog && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 2000
+        }}>
+          <div style={{
+            background: 'white',
+            padding: '20px',
+            borderRadius: '8px',
+            minWidth: '300px',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+          }}>
+            <h3 style={{ margin: '0 0 15px 0' }}>Save Filters</h3>
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                Filter Set Name:
+              </label>
+              <input
+                type="text"
+                value={filterName}
+                onChange={(e) => setFilterName(e.target.value)}
+                placeholder="e.g., Downtown High-rises"
+                style={{
+                  width: '100%',
+                  padding: '8px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  fontSize: '14px'
+                }}
+                onKeyPress={(e) => e.key === 'Enter' && handleSaveFilters()}
+              />
+            </div>
+            <div style={{ marginBottom: '15px', fontSize: '12px', color: '#666' }}>
+              Username: <strong>{username}</strong>
+            </div>
+            <div style={{ marginBottom: '15px', fontSize: '12px', color: '#666' }}>
+              Active Filters: {filters.filter(f => f.query.trim()).length}
+            </div>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={handleSaveFilters}
+                disabled={isSaving || !filterName.trim()}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  backgroundColor: isSaving || !filterName.trim() ? '#ccc' : '#007bff',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: isSaving || !filterName.trim() ? 'not-allowed' : 'pointer'
+                }}
+              >
+                {isSaving ? 'Saving...' : 'Save'}
+              </button>
+              <button
+                onClick={() => {
+                  setShowSaveDialog(false);
+                  setFilterName('');
+                }}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  backgroundColor: '#6c757d',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Load Filters Dialog */}
+      {showLoadDialog && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 2000
+        }}>
+          <div style={{
+            background: 'white',
+            padding: '20px',
+            borderRadius: '8px',
+            minWidth: '400px',
+            maxHeight: '80vh',
+            overflowY: 'auto',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+          }}>
+            <h3 style={{ margin: '0 0 15px 0' }}>Load Filters</h3>
+            <div style={{ marginBottom: '15px', fontSize: '12px', color: '#666' }}>
+              Username: <strong>{username}</strong>
+            </div>
+            
+            {savedFilters.length === 0 ? (
+              <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+                No saved filters found for this user.
+              </div>
+            ) : (
+              <div style={{ marginBottom: '20px' }}>
+                {savedFilters.map((filterSet, index) => (
+                  <div key={index} style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '10px',
+                    border: '1px solid #ddd',
+                    borderRadius: '4px',
+                    marginBottom: '8px',
+                    backgroundColor: '#f8f9fa'
+                  }}>
+                    <div>
+                      <div style={{ fontWeight: 'bold' }}>{filterSet.name}</div>
+                      <div style={{ fontSize: '12px', color: '#666' }}>
+                        Updated: {new Date(filterSet.updated_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '5px' }}>
+                      <button
+                        onClick={() => handleLoadFilters(filterSet.name)}
+                        disabled={isLoading}
+                        style={{
+                          padding: '5px 10px',
+                          backgroundColor: '#28a745',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '3px',
+                          cursor: isLoading ? 'not-allowed' : 'pointer',
+                          fontSize: '12px'
+                        }}
+                      >
+                        Load
+                      </button>
+                      <button
+                        onClick={() => handleDeleteFilters(filterSet.name)}
+                        style={{
+                          padding: '5px 10px',
+                          backgroundColor: '#dc3545',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '3px',
+                          cursor: 'pointer',
+                          fontSize: '12px'
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={() => setShowLoadDialog(false)}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  backgroundColor: '#6c757d',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer'
+                }}
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
