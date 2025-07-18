@@ -1,10 +1,32 @@
 import React, { useEffect, useState, useRef } from "react";
-import { fetchBuildings } from "./api";
+import { fetchBuildings, fetchLandUse } from "./api";
 import * as THREE from "three";
 import { MapControls } from 'three/examples/jsm/controls/MapControls';
 
 // center of calgary
 const centerCalgary = { lat: 51.0447, lng: -114.0719 };
+
+// Color mapping for different land use types
+const LAND_USE_COLORS = {
+  'C-C1': 0xff0000,    // Red for Commercial - Community 1
+  'C-C2': 0xff4444,    // Light Red for Commercial - Community 2
+  'C-COR1': 0xff8800,  // Orange for Commercial - Corridor 1
+  'C-COR2': 0xffaa00,  // Light Orange for Commercial - Corridor 2
+  'R-C1': 0x0000ff,    // Blue for Residential - Contextual One Dwelling
+  'R-C2': 0x4444ff,    // Light Blue for Residential - Contextual Two Dwelling
+  'R-CG': 0x8888ff,    // Light Blue for Residential - Grade-Oriented Infill
+  'R-CN': 0xaaaaff,    // Very Light Blue for Residential - Neighbourhood
+  'I-C1': 0xffff00,    // Yellow for Industrial
+  'I-G': 0xffff44,     // Light Yellow for Industrial - General
+  'DC': 0x00ff00,      // Green for Direct Control
+  'DC-1': 0x00ff00,    // Green for Direct Control
+  'S-URP': 0x884422,   // Brown for Special Purpose - Urban Reserve Park
+  'S-SPR': 0x666666,   // Gray for Special Purpose - Regional
+  'M-CG': 0xff00ff,    // Magenta for Mixed Use - General
+  'M-C1': 0xff44ff,    // Light Magenta for Mixed Use - Community 1
+  // Add more mappings as needed
+};
+
 
 function latLngToXY(lat, lng, width, height) {
   const x = (lng + 180) * (width / 360);
@@ -62,10 +84,10 @@ function createShapeFromVertices(vertices, center, scale = 1) {
 
 
 function plot_buildings(buildings, scene) {
-    const sceneScale = 1; 
+    const sceneScale = .2; 
     const center = centerCalgary;
 
-    buildings.forEach(building => {
+    buildings.forEach((building, index) => {
         if (!building?.polygon?.coordinates?.[0]) return;
 
         const polygonCoords = building.polygon.coordinates[0];
@@ -73,16 +95,44 @@ function plot_buildings(buildings, scene) {
 
         if (shape === -1) return; // invalid shape
 
+        // Calculate and store the building's center coordinates
+        const firstCoord = building.polygon.coordinates[0][0];
+        const longitude = firstCoord[0];
+        const latitude = firstCoord[1];
+        
+        // Calculate the converted X,Y coordinates in meters
+        const xMeters = measure(center.lat, center.lng, center.lat, longitude) * (longitude > center.lng ? 1 : -1) * sceneScale;
+        const yMeters = measure(center.lat, center.lng, latitude, center.lng) * (latitude > center.lat ? 1 : -1) * sceneScale;
+
+        // Store coordinates back on the building object
+        building.calculatedCoords = {
+            longitude: longitude,
+            latitude: latitude,
+            xMeters: xMeters,
+            yMeters: yMeters,
+            sceneScale: sceneScale
+        };
+
         const heightInMeters = building.rooftop_elev_z - building.grd_elev_min_z || 50;
         const heightValue = heightInMeters * sceneScale;
+        const land_use = building.land_use; // Land use now comes with the building data
+        const landUseColor = LAND_USE_COLORS[land_use?.LU_CODE] || 0xffefed; // Default color if not found
 
         const geometry = new THREE.ExtrudeGeometry(shape, {
             depth: heightValue,
             bevelEnabled: false,
         });
 
-        const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+        const material = new THREE.MeshBasicMaterial({ color: landUseColor });
         const mesh = new THREE.Mesh(geometry, material);
+
+        // Store building data on the mesh for click handling
+        mesh.userData = { 
+            building, 
+            index, 
+            landUse: land_use,
+            coordinates: building.calculatedCoords
+        };
 
         // Position at origin because shape is already relative to city center
         mesh.position.set(0, 0, 0);
@@ -95,11 +145,15 @@ function plot_buildings(buildings, scene) {
 
 function App() {
   const [buildings, setBuildings] = useState([]);
+  const [selectedBuilding, setSelectedBuilding] = useState(null);
+  const [popupPosition, setPopupPosition] = useState({ x: 0, y: 0 });
   const mountRef = useRef(null);
   const sceneRef = useRef(null);
   const rendererRef = useRef(null);
   const cameraRef = useRef(null);
   const controlsRef = useRef(null);
+  const raycasterRef = useRef(new THREE.Raycaster());
+  const mouseRef = useRef(new THREE.Vector2());
 
   useEffect(() => {
     const width = window.innerWidth;
@@ -141,6 +195,32 @@ function App() {
     controls.panSpeed = 0.5; // Slow pan
     controlsRef.current = controls;
 
+    // Mouse click handler
+    const onMouseClick = (event) => {
+      // Calculate mouse position in normalized device coordinates (-1 to +1)
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+      // Update the picking ray with the camera and mouse position
+      raycasterRef.current.setFromCamera(mouseRef.current, camera);
+
+      // Calculate objects intersecting the picking ray
+      const intersects = raycasterRef.current.intersectObjects(scene.children);
+
+      if (intersects.length > 0) {
+        const clickedObject = intersects[0].object;
+        if (clickedObject.userData.building) {
+          setSelectedBuilding(clickedObject.userData);
+          setPopupPosition({ x: event.clientX, y: event.clientY });
+        }
+      } else {
+        setSelectedBuilding(null);
+      }
+    };
+
+    renderer.domElement.addEventListener('click', onMouseClick);
+
     // Optional: Add a grid helper for reference
     const gridHelper = new THREE.GridHelper(1000, 50);
     gridHelper.rotation.x = Math.PI / 2;
@@ -157,6 +237,7 @@ function App() {
 
     // Clean up on unmount
     return () => {
+      renderer.domElement.removeEventListener('click', onMouseClick);
       mount.removeChild(renderer.domElement);
     };
   }, []);
@@ -168,7 +249,7 @@ function App() {
         sceneRef.current.remove(sceneRef.current.children[0]);
       }
       // Add grid helper back after clearing
-      const gridHelper = new THREE.GridHelper(10000, 50);
+      const gridHelper = new THREE.GridHelper(1000, 50);
       gridHelper.rotation.x = Math.PI / 2;
         gridHelper.position.set(0, 0, -15);
 
@@ -192,6 +273,94 @@ function App() {
         ref={mountRef}
         style={{ width: "100vw", height: "100vh", position: "absolute", zIndex: 0 }}
       />
+      
+      {/* Building Info Popup */}
+      {selectedBuilding && (
+        <div
+          style={{
+            position: "absolute",
+            left: popupPosition.x + 10,
+            top: popupPosition.y - 10,
+            background: "rgba(255, 255, 255, 0.95)",
+            border: "1px solid #ccc",
+            borderRadius: "8px",
+            padding: "15px",
+            boxShadow: "0 4px 8px rgba(0,0,0,0.2)",
+            maxWidth: "300px",
+            zIndex: 1000,
+            fontSize: "14px",
+            fontFamily: "Arial, sans-serif"
+          }}
+        >
+          <button
+            onClick={() => setSelectedBuilding(null)}
+            style={{
+              position: "absolute",
+              top: "5px",
+              right: "8px",
+              background: "none",
+              border: "none",
+              fontSize: "16px",
+              cursor: "pointer",
+              color: "#666"
+            }}
+          >
+            ×
+          </button>
+          
+          <h3 style={{ margin: "0 0 10px 0", color: "#333" }}>Building Information</h3>
+          
+          <div style={{ lineHeight: "1.5" }}>
+            <strong>Ground Elevation:</strong> {
+              selectedBuilding.building.grd_elev_min_z != null 
+                ? Number(selectedBuilding.building.grd_elev_min_z).toFixed(2) + " m"
+                : "N/A"
+            }<br/>
+            <strong>Rooftop Elevation:</strong> {
+              selectedBuilding.building.rooftop_elev_z != null 
+                ? Number(selectedBuilding.building.rooftop_elev_z).toFixed(2) + " m"
+                : "N/A"
+            }<br/>
+            <strong>Height:</strong> {
+              selectedBuilding.building.rooftop_elev_z != null && selectedBuilding.building.grd_elev_min_z != null
+                ? Number(selectedBuilding.building.rooftop_elev_z - selectedBuilding.building.grd_elev_min_z).toFixed(2) + " m"
+                : "N/A"
+            }<br/>
+            {selectedBuilding.coordinates && (
+              <>
+                <strong>Longitude:</strong> {selectedBuilding.coordinates.longitude.toFixed(6)}<br/>
+                <strong>Latitude:</strong> {selectedBuilding.coordinates.latitude.toFixed(6)}<br/>
+                <strong>X (meters):</strong> {selectedBuilding.coordinates.xMeters.toFixed(2)} m<br/>
+                <strong>Y (meters):</strong> {selectedBuilding.coordinates.yMeters.toFixed(2)} m<br/>
+              </>
+            )}
+            {(selectedBuilding.landUse?.lu_code || selectedBuilding.building.land_use?.lu_code) && (
+              <>
+                <strong>Land Use Code:</strong> {selectedBuilding.landUse?.lu_code || selectedBuilding.building.land_use?.lu_code}<br/>
+                {(selectedBuilding.landUse?.description || selectedBuilding.building.land_use?.description) && (
+                  <><strong>Land Use:</strong> {selectedBuilding.landUse?.description || selectedBuilding.building.land_use?.description}<br/></>
+                )}
+                {(selectedBuilding.landUse?.major || selectedBuilding.building.land_use?.major) && (
+                  <><strong>Category:</strong> {selectedBuilding.landUse?.major || selectedBuilding.building.land_use?.major}<br/></>
+                )}
+                {(selectedBuilding.landUse?.generalize || selectedBuilding.building.land_use?.generalize) && (
+                  <><strong>General Type:</strong> {selectedBuilding.landUse?.generalize || selectedBuilding.building.land_use?.generalize}<br/></>
+                )}
+                {(selectedBuilding.landUse?.label || selectedBuilding.building.land_use?.label) && (
+                  <><strong>Zone Label:</strong> {selectedBuilding.landUse?.label || selectedBuilding.building.land_use?.label}<br/></>
+                )}
+                {(selectedBuilding.landUse?.lu_bylaw || selectedBuilding.building.land_use?.lu_bylaw) && (
+                  <><strong>Bylaw:</strong> {selectedBuilding.landUse?.lu_bylaw || selectedBuilding.building.land_use?.lu_bylaw}<br/></>
+                )}
+              </>
+            )}
+            {/* Debug: Show if no land use found */}
+            {!selectedBuilding.landUse?.lu_code && !selectedBuilding.building.land_use?.lu_code && (
+              <><strong>Land Use:</strong> No zoning data found<br/></>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
