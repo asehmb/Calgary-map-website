@@ -1,31 +1,11 @@
 import React, { useEffect, useState, useRef } from "react";
-import { fetchBuildings, fetchLandUse } from "./api";
+import { fetchBuildings, fetchLandUse, filterBuildings } from "./api";
 import * as THREE from "three";
 import { MapControls } from 'three/examples/jsm/controls/MapControls';
 
 // center of calgary
 const centerCalgary = { lat: 51.0447, lng: -114.0719 };
 
-// Color mapping for different land use types
-const LAND_USE_COLORS = {
-  'C-C1': 0xff0000,    // Red for Commercial - Community 1
-  'C-C2': 0xff4444,    // Light Red for Commercial - Community 2
-  'C-COR1': 0xff8800,  // Orange for Commercial - Corridor 1
-  'C-COR2': 0xffaa00,  // Light Orange for Commercial - Corridor 2
-  'R-C1': 0x0000ff,    // Blue for Residential - Contextual One Dwelling
-  'R-C2': 0x4444ff,    // Light Blue for Residential - Contextual Two Dwelling
-  'R-CG': 0x8888ff,    // Light Blue for Residential - Grade-Oriented Infill
-  'R-CN': 0xaaaaff,    // Very Light Blue for Residential - Neighbourhood
-  'I-C1': 0xffff00,    // Yellow for Industrial
-  'I-G': 0xffff44,     // Light Yellow for Industrial - General
-  'DC': 0x00ff00,      // Green for Direct Control
-  'DC-1': 0x00ff00,    // Green for Direct Control
-  'S-URP': 0x884422,   // Brown for Special Purpose - Urban Reserve Park
-  'S-SPR': 0x666666,   // Gray for Special Purpose - Regional
-  'M-CG': 0xff00ff,    // Magenta for Mixed Use - General
-  'M-C1': 0xff44ff,    // Light Magenta for Mixed Use - Community 1
-  // Add more mappings as needed
-};
 
 
 function latLngToXY(lat, lng, width, height) {
@@ -116,7 +96,7 @@ function plot_buildings(buildings, scene) {
         const heightInMeters = building.rooftop_elev_z - building.grd_elev_min_z || 50;
         const heightValue = heightInMeters * sceneScale;
         const land_use = building.land_use; // Land use now comes with the building data
-        const landUseColor = LAND_USE_COLORS[land_use?.LU_CODE] || 0xffefed; // Default color if not found
+        const landUseColor = 0xffefed; // Default color if not found
 
         const geometry = new THREE.ExtrudeGeometry(shape, {
             depth: heightValue,
@@ -145,8 +125,11 @@ function plot_buildings(buildings, scene) {
 
 function App() {
   const [buildings, setBuildings] = useState([]);
+  const [allBuildings, setAllBuildings] = useState([]); // Store original buildings
   const [selectedBuilding, setSelectedBuilding] = useState(null);
   const [popupPosition, setPopupPosition] = useState({ x: 0, y: 0 });
+  const [filterQuery, setFilterQuery] = useState('');
+  const [isFiltering, setIsFiltering] = useState(false);
   const mountRef = useRef(null);
   const sceneRef = useRef(null);
   const rendererRef = useRef(null);
@@ -262,12 +245,106 @@ function App() {
 
   useEffect(() => {
     fetchBuildings()
-      .then((data) => setBuildings(data))
+      .then((data) => {
+        setAllBuildings(data); // Store original data
+        setBuildings(data);    // Display all initially
+      })
       .catch((err) => console.error("Failed to fetch buildings:", err));
   }, []);
 
+  // Filter handler
+  const handleFilter = async () => {
+    if (!filterQuery.trim()) {
+      setBuildings(allBuildings); // Reset to all buildings if no query
+      return;
+    }
+
+    setIsFiltering(true);
+    try {
+      const filteredData = await filterBuildings(filterQuery);
+      setBuildings(filteredData);
+    } catch (error) {
+      console.error('Filter failed:', error);
+      // Keep current buildings on error
+    } finally {
+      setIsFiltering(false);
+    }
+  };
+
+  // Reset filter
+  const handleResetFilter = () => {
+    setFilterQuery('');
+    setBuildings(allBuildings);
+  };
+
   return (
     <div>
+      {/* Filter Controls */}
+      <div style={{
+        position: 'absolute',
+        top: '10px',
+        left: '10px',
+        zIndex: 1000,
+        background: 'rgba(255, 255, 255, 0.9)',
+        padding: '15px',
+        borderRadius: '8px',
+        boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+        minWidth: '300px'
+      }}>
+        <h3 style={{ margin: '0 0 10px 0', fontSize: '16px' }}>Filter Buildings</h3>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <input
+            type="text"
+            value={filterQuery}
+            onChange={(e) => setFilterQuery(e.target.value)}
+            placeholder="e.g., tall buildings above 1150"
+            style={{
+              flex: 1,
+              padding: '8px',
+              border: '1px solid #ddd',
+              borderRadius: '4px',
+              fontSize: '14px'
+            }}
+            onKeyPress={(e) => e.key === 'Enter' && handleFilter()}
+          />
+          <button
+            onClick={handleFilter}
+            disabled={isFiltering}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: '#007bff',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: isFiltering ? 'not-allowed' : 'pointer',
+              fontSize: '14px'
+            }}
+          >
+            {isFiltering ? 'Filtering...' : 'Filter'}
+          </button>
+          <button
+            onClick={handleResetFilter}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: '#6c757d',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '14px'
+            }}
+          >
+            Reset
+          </button>
+        </div>
+        <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
+          Showing {buildings.length} of {allBuildings.length} buildings
+        </div>
+        <div style={{ fontSize: '11px', color: '#999', marginTop: '4px' }}>
+          Examples: "tall buildings above 1150", "rooftop_elev_z {'>'}  1200", "ground level above 1049"
+        </div>
+      </div>
+
       <h1>Flat Map with Buildings</h1>
       <div
         ref={mountRef}

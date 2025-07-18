@@ -2,12 +2,118 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import requests
 import os
+import re
+import json
 from dotenv import load_dotenv
 from geojson import Point
 from shapely.geometry import shape, Point as ShapelyPoint
 
 # Load environment variables
 load_dotenv()
+
+def extract_filter_with_llm(user_query):
+    """Use Hugging Face LLM to extract filter criteria from natural language"""
+    
+    
+    # Try pattern matching for natural language
+    nlp_result = extract_filter_nlp_patterns(user_query)
+    if nlp_result:
+        print(f"NLP pattern matching worked: {nlp_result}")
+        return nlp_result
+    
+    # Get Hugging Face API token from environment
+    hf_token = os.getenv('HUGGINGFACE_API_TOKEN')
+    if not hf_token or hf_token == 'your_hf_token_here':
+        print("Warning: No Hugging Face API token found, all parsing methods failed")
+        return None
+    
+    # Use LLM as last resort for complex queries
+    print(f"Using LLM to parse: {user_query}")
+    
+    try:
+        headers = {
+            "Authorization": f"Bearer {hf_token}",
+            "Content-Type": "application/json"
+        }
+        
+        api_url = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium"
+        
+        prompt = f"Convert this to JSON with attribute, operator, value: {user_query}. Available attributes: rooftop_elev_z, grd_elev_min_z. Output JSON only:"
+        
+        payload = {
+            "inputs": prompt,
+            "parameters": {
+                "max_new_tokens": 30,
+                "temperature": 0.1
+            }
+        }
+        
+        response = requests.post(api_url, headers=headers, json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            result = response.json()
+            print(f"LLM response: {result}")
+            
+            # Try to extract JSON from response
+            if isinstance(result, list) and len(result) > 0:
+                generated_text = result[0].get('generated_text', '')
+                json_match = re.search(r'\{[^}]*\}', generated_text)
+                if json_match:
+                    try:
+                        filter_data = json.loads(json_match.group())
+                        if all(key in filter_data for key in ['attribute', 'operator', 'value']):
+                            return filter_data
+                    except json.JSONDecodeError:
+                        pass
+        
+        print(f"LLM parsing failed, status: {response.status_code}")
+        
+    except Exception as e:
+        print(f"Error calling Hugging Face API: {e}")
+    
+    return None
+
+def extract_filter_nlp_patterns(user_query):
+    """Extract filters using natural language pattern matching"""
+    query = user_query.lower().strip()
+    
+    # Pattern matching for common phrases
+    patterns = [
+        # "tall buildings" or "height above X" or "above X meters" - use rooftop elevation as proxy for height
+        (r'(?:tall|height|elevation).*?(?:above|over|greater than|>)\s*(\d+(?:\.\d+)?)', 'rooftop_elev_z', '>'),
+        (r'(?:above|over)\s*(\d+(?:\.\d+)?)\s*(?:meters?|m)', 'rooftop_elev_z', '>'),
+        # "short buildings" or "height below X"  
+        (r'(?:short|low|height|elevation).*?(?:below|under|less than|<)\s*(\d+(?:\.\d+)?)', 'rooftop_elev_z', '<'),
+        (r'(?:below|under)\s*(\d+(?:\.\d+)?)\s*(?:meters?|m)', 'rooftop_elev_z', '<'),
+        # "ground level above X"
+        (r'(?:ground|base).*?(?:above|over|>)\s*(\d+(?:\.\d+)?)', 'grd_elev_min_z', '>'),
+        # "ground level below X"
+        (r'(?:ground|base).*?(?:below|under|<)\s*(\d+(?:\.\d+)?)', 'grd_elev_min_z', '<'),
+        # "buildings taller than X"
+        (r'(?:buildings?|structures?).*?(?:taller|higher).*?(?:than|>)\s*(\d+(?:\.\d+)?)', 'rooftop_elev_z', '>'),
+        # "buildings shorter than X"
+        (r'(?:buildings?|structures?).*?(?:shorter|lower).*?(?:than|<)\s*(\d+(?:\.\d+)?)', 'rooftop_elev_z', '<'),
+        # Simple "X meters" (assume height)
+        (r'(\d+(?:\.\d+)?)\s*(?:meters?|m)', 'rooftop_elev_z', '>'),
+    ]
+    
+    print(f"Trying to match patterns for: '{query}'")
+    
+    for i, (pattern, attribute, operator) in enumerate(patterns):
+        match = re.search(pattern, query)
+        if match:
+            value = match.group(1)
+            result = {
+                'attribute': attribute,
+                'operator': operator,
+                'value': value
+            }
+            print(f"Pattern {i} matched: {result}")
+            return result
+    
+    print("No patterns matched")
+    return None
+
 
 app = Flask(__name__)
 CORS(app, origins=[os.getenv('CORS_ORIGINS', 'http://localhost:3000')])
@@ -69,7 +175,40 @@ def buildings_endpoint():
     processed = process_buildings(raw_data)
     return jsonify(processed)
 
-@app.route('/api/land-use', methods=['GET'])
+@app.route("/api/filter-buildings", methods=["POST"])
+def filter_buildings():
+    data = request.get_json()
+    user_query = data.get("query", "")
+
+    # First, get all buildings
+    downtown_bbox = {
+        "max_lat": 51.06,
+        "min_lat": 51.04,
+        "min_lng": -114.09,
+        "max_lng": -114.05
+    }
+    
+    raw_building_data = fetch_building_data(limit=1000, bbox=downtown_bbox)
+    buildings = process_buildings(raw_building_data)
+
+    filter_criteria = extract_filter_with_llm(user_query)
+    if not filter_criteria:
+        return jsonify({"error": "Could not extract filter"}), 400
+
+    attr = filter_criteria["attribute"]
+    op = filter_criteria["operator"]
+    value = float(filter_criteria["value"])
+
+    def matches(b):
+        try:
+            v = float(b.get(attr, 0))
+            return eval(f"v {op} {value}")
+        except:
+            return False
+
+    matched = [b for b in buildings if matches(b)]
+    return jsonify(matched)
+
 @app.route('/api/land-use', methods=['GET'])
 def get_land_use():
     try:
@@ -169,8 +308,6 @@ def buildings_with_land_use():
                             matched_count += 1
                             break
 
-                            matched_count += 1
-                            break
 
                 except Exception as e:
                     print(f"Error processing building: {e}")

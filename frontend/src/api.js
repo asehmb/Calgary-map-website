@@ -40,3 +40,15 @@ export const fetchLandUse = async (longitude, latitude) => {
     }
 
 }
+
+export const filterBuildings = async (query) => {
+  try {
+    const response = await axios.post(`${API_URL}/filter-buildings`, {
+      query: query
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error filtering buildings:', error);
+    return [];
+  }
+};
