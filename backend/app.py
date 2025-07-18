@@ -140,7 +140,9 @@ def extract_filter_nlp_patterns(user_query):
 
 
 app = Flask(__name__)
-CORS(app, origins=[os.getenv('CORS_ORIGINS', 'http://localhost:3000')])
+
+# Configure CORS
+CORS(app, origins=["https://calgary-map-frontend.onrender.com", "https://localhost:3000"], supports_credentials=True)
 
 # API Configuration from environment variables
 CALGARY_LAND_USE_API = os.getenv('CALGARY_LAND_USE_API', 'https://data.calgary.ca/resource/mw9j-jik5.json')
