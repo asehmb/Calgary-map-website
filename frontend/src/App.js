@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useRef } from "react";
-import { fetchBuildings, fetchLandUse, filterBuildings, filterBuildingsMultiple, saveFilters, loadFilters, deleteFilters, listUserFilters } from "./api";
+import React, { useEffect, useState, useRef, useCallback } from "react";
+import { fetchBuildings, filterBuildings, filterBuildingsMultiple, saveFilters, loadFilters, deleteFilters, listUserFilters } from "./api";
 import * as THREE from "three";
 import { MapControls } from 'three/examples/jsm/controls/MapControls';
 
@@ -147,7 +147,6 @@ function plot_buildings(buildings, scene, highlight_color = 0xff4444) {
 
 
 function App() {
-  const [buildings, setBuildings] = useState([]);
   const [highlightedBuildings, setHighlightedBuildings] = useState([]); // Store filtered buildings to highlight
   const [selectedBuilding, setSelectedBuilding] = useState(null);
   const [popupPosition, setPopupPosition] = useState({ x: 0, y: 0 });
@@ -283,7 +282,6 @@ function App() {
   useEffect(() => {
     fetchBuildings()
       .then((data) => {
-        setBuildings(data);    // Display all initially
         // save buildings to global variable for later use
         buildings_dict.current.clear(); // Clear existing data
         for (let i = 0; i < data.length; i++) {
@@ -541,7 +539,7 @@ function App() {
     }
   };
 
-  const loadUserFiltersList = async () => {
+  const loadUserFiltersList = useCallback(async () => {
     if (!username.trim()) return;
     
     try {
@@ -554,7 +552,7 @@ function App() {
     } catch (error) {
       console.error('Error loading filter list:', error.message);
     }
-  };
+  }, [username]);
 
   const handleDeleteFilters = async (filterSetName) => {
     if (!username.trim()) return;
@@ -581,7 +579,7 @@ function App() {
     if (username.trim()) {
       loadUserFiltersList();
     }
-  }, [username]);
+  }, [username, loadUserFiltersList]);
 
 return (
     <div>
@@ -765,7 +763,9 @@ return (
                 </button>
             </div>
             
-            <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}></div>
+            <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
+              Showing {buildings_dict.current.size} buildings total, {highlightedBuildings.length} highlighted
+            </div>
         <div style={{ fontSize: '11px', color: '#999', marginTop: '4px' }}>
           Examples: "height above 100", "tall buildings above 50", "ground level above 1049"
         </div>

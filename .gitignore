@@ -17,6 +17,7 @@ node_modules/
 test.*
 check-deployment.sh
 
+frontend/build/
 
 # testing
 /coverage
