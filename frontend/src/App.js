@@ -7,18 +7,17 @@ import { MapControls } from 'three/examples/jsm/controls/MapControls';
 const centerCalgary = { lat: 51.0447, lng: -114.0719 };
 
 
+// function latLngToXY(lat, lng, width, height) {
+//   const x = (lng + 180) * (width / 360);
+//   const y = (90 - lat) * (height / 180);
+//   return new THREE.Vector2(x - width / 2, y - height / 2);
+// }
 
-function latLngToXY(lat, lng, width, height) {
-  const x = (lng + 180) * (width / 360);
-  const y = (90 - lat) * (height / 180);
-  return new THREE.Vector2(x - width / 2, y - height / 2);
-}
-
-function getPolygonCenter(points) {
-    const center = new THREE.Vector2(0, 0);
-    points.forEach(p => center.add(p));
-    return center.divideScalar(points.length);
-}
+// function getPolygonCenter(points) {
+//     const center = new THREE.Vector2(0, 0);
+//     points.forEach(p => center.add(p));
+//     return center.divideScalar(points.length);
+// }
 
 // logitutde and latitude to meters
 function measure(lat1, lon1, lat2, lon2){  // generally used geo measurement function
@@ -63,17 +62,21 @@ function createShapeFromVertices(vertices, center, scale = 1) {
 }
 
 
-function plot_buildings(buildings, scene) {
+function plot_buildings(buildings, scene, highlight_color = 0xff4444) {
     const sceneScale = .2; 
     const center = centerCalgary;
+    let highlightedRenderedCount = 0;
+    let totalRenderedCount = 0;
 
-    buildings.forEach((building, index) => {
-        if (!building?.polygon?.coordinates?.[0]) return;
+    for (const building of buildings.values()) {
+        if (!building?.polygon?.coordinates?.[0]) continue;
 
         const polygonCoords = building.polygon.coordinates[0];
         const shape = createShapeFromVertices(polygonCoords, center, sceneScale);
 
-        if (shape === -1) return; // invalid shape
+        if (shape === -1) continue; // invalid shape
+
+        totalRenderedCount++;
 
         // Calculate and store the building's center coordinates
         const firstCoord = building.polygon.coordinates[0][0];
@@ -84,10 +87,10 @@ function plot_buildings(buildings, scene) {
         const xMeters = measure(center.lat, center.lng, center.lat, longitude) * (longitude > center.lng ? 1 : -1) * sceneScale;
         const yMeters = measure(center.lat, center.lng, latitude, center.lng) * (latitude > center.lat ? 1 : -1) * sceneScale;
 
-
-        const heightInMeters = building.rooftop_elev_z - building.grd_elev_min_z || 50;
+        const heightInMeters = building.height;
         const heightValue = heightInMeters * sceneScale;
-                // Store coordinates back on the building object
+        
+        // Store coordinates back on the building object
         building.calculatedCoords = {
             longitude: longitude,
             latitude: latitude,
@@ -96,40 +99,61 @@ function plot_buildings(buildings, scene) {
         };
         
         const land_use = building.land_use; // Land use now comes with the building data
-        const landUseColor = 0xffefed; // Default color if not found
+        
+        // Color and opacity logic for highlighting
+        let buildingColor; // Default gray set in flask
+        let opacity = 1.0; // Default full opacity
+        
+        if (building.isHighlighted) {
+            buildingColor = highlight_color; // Red for highlighted
+            opacity = 1.0;
+            highlightedRenderedCount++;
+            console.log("Rendering highlighted building:", building.id);
+        } else {
+            buildingColor = building.colour;
+            opacity = building.isHighlighted ? 1.0 : 0.3; // Low opacity for non-highlighted when filtering
+        }
 
         const geometry = new THREE.ExtrudeGeometry(shape, {
             depth: heightValue,
             bevelEnabled: false,
         });
 
-        const material = new THREE.MeshBasicMaterial({ color: landUseColor });
+        const material = new THREE.MeshBasicMaterial({ 
+            color: buildingColor,
+            transparent: (opacity < 1.0), // Only set transparent if opacity is less than 1
+            opacity: opacity
+        });
         const mesh = new THREE.Mesh(geometry, material);
 
         // Store building data on the mesh for click handling
         mesh.userData = { 
             building, 
-            index, 
+            id: building.id, 
             landUse: land_use,
-            coordinates: building.calculatedCoords
+            coordinates: building.calculatedCoords,
+            isHighlighted: building.isHighlighted
         };
 
         // Position at origin because shape is already relative to city center
         mesh.position.set(0, 0, 0);
 
         scene.add(mesh);
-    });
+    }
+    
+    console.log(`Rendered ${highlightedRenderedCount} highlighted buildings out of ${totalRenderedCount} total buildings`);
 }
 
 
 
 function App() {
   const [buildings, setBuildings] = useState([]);
-  const [allBuildings, setAllBuildings] = useState([]); // Store original buildings
+  const [highlightedBuildings, setHighlightedBuildings] = useState([]); // Store filtered buildings to highlight
   const [selectedBuilding, setSelectedBuilding] = useState(null);
   const [popupPosition, setPopupPosition] = useState({ x: 0, y: 0 });
   const [filterQuery, setFilterQuery] = useState('');
   const [isFiltering, setIsFiltering] = useState(false);
+  const [buildingsLoaded, setBuildingsLoaded] = useState(false); // Trigger for re-render
   const mountRef = useRef(null);
   const sceneRef = useRef(null);
   const rendererRef = useRef(null);
@@ -137,6 +161,7 @@ function App() {
   const controlsRef = useRef(null);
   const raycasterRef = useRef(new THREE.Raycaster());
   const mouseRef = useRef(new THREE.Vector2());
+  const buildings_dict = useRef(new Map()); // This will hold the building data
 
   useEffect(() => {
     const width = window.innerWidth;
@@ -225,8 +250,9 @@ function App() {
     };
   }, []);
 
+  // main loop
   useEffect(() => {
-    if (buildings.length && sceneRef.current) {
+    if (buildingsLoaded && sceneRef.current) {
       // Clear previous buildings
       while (sceneRef.current.children.length > 0) {
         sceneRef.current.remove(sceneRef.current.children[0]);
@@ -234,20 +260,27 @@ function App() {
       // Add grid helper back after clearing
       const gridHelper = new THREE.GridHelper(1000, 50);
       gridHelper.rotation.x = Math.PI / 2;
-        gridHelper.position.set(0, 0, -15);
+      gridHelper.position.set(0, 0, -15);
 
       sceneRef.current.add(gridHelper);
 
       // Plot buildings on flat map
-      plot_buildings(buildings, sceneRef.current, window.innerWidth, window.innerHeight);
+      plot_buildings(buildings_dict.current, sceneRef.current);
     }
-  }, [buildings]);
+  }, [buildingsLoaded, highlightedBuildings]);
 
   useEffect(() => {
     fetchBuildings()
       .then((data) => {
-        setAllBuildings(data); // Store original data
         setBuildings(data);    // Display all initially
+        // save buildings to global variable for later use
+        buildings_dict.current.clear(); // Clear existing data
+        for (let i = 0; i < data.length; i++) {
+          buildings_dict.current.set(data[i].id, data[i]);
+        }
+        setBuildingsLoaded(true); // Trigger re-render
+        console.log("Loaded buildings into dictionary:", buildings_dict.current.size);
+        console.log("Sample building IDs:", Array.from(buildings_dict.current.keys()));
       })
       .catch((err) => console.error("Failed to fetch buildings:", err));
   }, []);
@@ -255,17 +288,64 @@ function App() {
   // Filter handler
   const handleFilter = async () => {
     if (!filterQuery.trim()) {
-      setBuildings(allBuildings); // Reset to all buildings if no query
+      setHighlightedBuildings([]); // Reset highlights if no query
+      // Reset all building colors
+      for (const building of buildings_dict.current.values()) {
+        building.colour = 0xcccccc; // Reset to default gray
+        building.isHighlighted = false;
+      }
       return;
     }
 
     setIsFiltering(true);
     try {
+      // Reset all building colors first
+      for (const building of buildings_dict.current.values()) {
+        building.colour = 0xcccccc; // Default gray for non-highlighted
+        building.isHighlighted = false;
+      }
+      
       const filteredData = await filterBuildings(filterQuery);
-      setBuildings(filteredData);
+      console.log("Filtered buildings:", filteredData);
+      
+      // Highlight the filtered buildings
+      let highlightedCount = 0;
+      for (let i = 0; i < filteredData.length; i++) {
+        const buildingId = filteredData[i]; // filteredData contains IDs
+        console.log("Looking for building ID:", buildingId, "Type:", typeof buildingId);
+        const building = buildings_dict.current.get(buildingId);
+        if (building) {
+          building.colour = 0xff4444; // Red for highlighted
+          building.isHighlighted = true; // Add highlight flag
+          highlightedCount++;
+        } else {
+          console.warn("Building not found in dictionary:", buildingId);
+          // Try converting to string/number in case of type mismatch
+          const stringId = String(buildingId);
+          const numberId = Number(buildingId);
+          const buildingStr = buildings_dict.current.get(stringId);
+          const buildingNum = buildings_dict.current.get(numberId);
+          if (buildingStr) {
+            console.log("Found building with string ID:", stringId);
+            buildingStr.colour = 0xff4444;
+            buildingStr.isHighlighted = true;
+            highlightedCount++;
+          } else if (buildingNum) {
+            console.log("Found building with number ID:", numberId);
+            buildingNum.colour = 0xff4444;
+            buildingNum.isHighlighted = true;
+            highlightedCount++;
+          }
+        }
+      }
+      
+      console.log(`Successfully highlighted ${highlightedCount} out of ${filteredData.length} buildings`);
+      
+      // Trigger re-render by updating state
+      setHighlightedBuildings(filteredData);
     } catch (error) {
       console.error('Filter failed:', error);
-      // Keep current buildings on error
+      // Keep current highlights on error
     } finally {
       setIsFiltering(false);
     }
@@ -274,7 +354,15 @@ function App() {
   // Reset filter
   const handleResetFilter = () => {
     setFilterQuery('');
-    setBuildings(allBuildings);
+    setHighlightedBuildings([]);
+    // Reset all building colors
+    for (const building of buildings_dict.current.values()) {
+      building.colour = 0xcccccc; // Reset to default gray
+      building.isHighlighted = false;
+    }
+    // Force re-render by updating buildingsLoaded state
+    setBuildingsLoaded(prev => !prev);
+    setTimeout(() => setBuildingsLoaded(prev => !prev), 50);
   };
 
   return (
@@ -291,7 +379,7 @@ function App() {
         boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
         minWidth: '300px'
       }}>
-        <h3 style={{ margin: '0 0 10px 0', fontSize: '16px' }}>Filter Buildings</h3>
+        <h3 style={{ margin: '0 0 10px 0', fontSize: '16px' }}>Highlight Buildings</h3>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           <input
             type="text"
@@ -338,10 +426,10 @@ function App() {
           </button>
         </div>
         <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
-          Showing {buildings.length} of {allBuildings.length} buildings
+          Showing {buildings.length} buildings total, {highlightedBuildings.length} highlighted
         </div>
         <div style={{ fontSize: '11px', color: '#999', marginTop: '4px' }}>
-          Examples: "tall buildings above 50", "height below 30", "ground level above 1049"
+          Examples: "height above 100", "tall buildings above 50", "ground level above 1049"
         </div>
       </div>
 
@@ -385,7 +473,21 @@ function App() {
             ×
           </button>
           
-          <h3 style={{ margin: "0 0 10px 0", color: "#333" }}>Building Information</h3>
+          <h3 style={{ margin: "0 0 10px 0", color: "#333" }}>
+            Building Information
+            {selectedBuilding.isHighlighted && (
+              <span style={{ 
+                marginLeft: "10px", 
+                padding: "2px 6px", 
+                background: "#ff4444", 
+                color: "white", 
+                borderRadius: "3px", 
+                fontSize: "10px" 
+              }}>
+                HIGHLIGHTED
+              </span>
+            )}
+          </h3>
           
           <div style={{ lineHeight: "1.5" }}>
             <strong>Ground Elevation:</strong> {

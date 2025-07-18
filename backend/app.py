@@ -12,20 +12,17 @@ from huggingface_hub.inference_api import InferenceApi
 # Load environment variables
 load_dotenv()
 
+
 def extract_filter_with_llm(user_query):
     """Use Hugging Face LLM to extract filter criteria from natural language"""
         
-    # Try pattern matching for natural language
+    # Try pattern matching for natural language to save on api credits
     # nlp_result = extract_filter_nlp_patterns(user_query)
     # if nlp_result:
     #     print(f"NLP pattern matching worked: {nlp_result}")
     #     return nlp_result
     
-    # Quirk with the code
-    # typing in buildings taller than 50 meters
-    # and buildinds above 50m
-    # net the same json, HOWEVER, after filtering, above shows only 20 buildings 
-    # but taller shows 72
+
     hf_token = os.getenv('HUGGINGFACE_API_TOKEN')
     if not hf_token:
         print("Warning: No Hugging Face API token found, all parsing methods failed")
@@ -45,6 +42,9 @@ Available attributes:
 - grd_elev_min_z (min ground elevation above sea level)
 - grd_elev_max_z (max ground elevation above sea level)
 - land_use (land use type of the building)
+
+- larger,bigger,above,taller: >
+- smaller,shorter: <
 
 Respond only with JSON like: {{"attribute": "height", "operator": ">", "value": 100}}"""
 
@@ -91,6 +91,7 @@ Respond only with JSON like: {{"attribute": "height", "operator": ">", "value": 
 
     return None
 
+""" from chatgpt """
 def extract_filter_nlp_patterns(user_query):
     """Extract filters using natural language pattern matching"""
     query = user_query.lower().strip()
@@ -142,16 +143,26 @@ BUILDING_URL = os.getenv('BUILDING_API_URL', 'https://data.calgary.ca/resource/c
 CALGARY_APP_TOKEN = os.getenv('CALGARY_APP_TOKEN')
 CALGARY_API_SECRET = os.getenv('CALGARY_API_SECRET')
 
+# Cache for building data
+buildings_cache = {
+    'raw_data': None,
+    'processed_data': None,
+    'cache_time': None,
+    'bbox': None
+}
+
+# Cache duration in seconds (e.g., 1 hour)
+CACHE_DURATION = 3600
+
 # Prepare parameters for authenticated requests
 def get_api_params(base_params=None):
     """Get API parameters including authentication token"""
     params = base_params or {}
-    # Note: Calgary Open Data APIs work without authentication for these endpoints
-    # Adding app token actually causes 403 errors, so we'll skip it
     return params
 
 def process_buildings(buildings):
     processed = []
+    building_count = 0
     for building in buildings:
         # Calculate building height
         rooftop_z = float(building.get("rooftop_elev_z") or 0)
@@ -171,11 +182,59 @@ def process_buildings(buildings):
             "height": str(height),  # Add calculated height field
             "land_use": building.get("land_use"),
             "polygon": building.get("polygon"),  # coordinates in GeoJSON format
+            "struct_id": building.get("struct_id"),
+            "id": building_count,
+            "colour": 0xcccccc, # default color for buildings
         })
+        building_count += 1
     return processed
 
 
+def get_cached_processed_buildings(limit=1000, bbox=None):
+    import time
+    
+    # Create a cache key based on bbox and limit
+    cache_key = f"{limit}_{bbox}"
+    current_time = time.time()
+    
+    # Check if we have valid cached processed data
+    if (buildings_cache['processed_data'] is not None and 
+        buildings_cache['cache_time'] is not None and
+        buildings_cache['bbox'] == cache_key and
+        current_time - buildings_cache['cache_time'] < CACHE_DURATION):
+        
+        print(f"Using cached processed building data ({len(buildings_cache['processed_data'])} buildings)")
+        return buildings_cache['processed_data']
+    
+    # Fetch and process fresh data
+    raw_data = fetch_building_data(limit=limit, bbox=bbox)
+    processed_data = process_buildings(raw_data)
+    
+    # Update processed data cache
+    buildings_cache['processed_data'] = processed_data
+    print(f"Processed and cached {len(processed_data)} buildings")
+    
+    return processed_data
+
+
 def fetch_building_data(limit=1000, bbox=None):
+    import time
+    
+    # Create a cache key based on bbox and limit
+    cache_key = f"{limit}_{bbox}"
+    current_time = time.time()
+    
+    # Check if we have valid cached data
+    if (buildings_cache['raw_data'] is not None and 
+        buildings_cache['cache_time'] is not None and
+        buildings_cache['bbox'] == cache_key and
+        current_time - buildings_cache['cache_time'] < CACHE_DURATION):
+        
+        print(f"Using cached building data ({len(buildings_cache['raw_data'])} buildings)")
+        return buildings_cache['raw_data']
+    
+    # Fetch fresh data
+    print(f"Fetching fresh building data from API...")
     url = BUILDING_URL
     params = {"$limit": limit}
     if bbox:
@@ -184,7 +243,15 @@ def fetch_building_data(limit=1000, bbox=None):
     params = get_api_params(params)
     res = requests.get(url, params=params)
     res.raise_for_status()
-    return res.json()
+    raw_data = res.json()
+    
+    # Update cache
+    buildings_cache['raw_data'] = raw_data
+    buildings_cache['cache_time'] = current_time
+    buildings_cache['bbox'] = cache_key
+    print(f"Cached {len(raw_data)} buildings")
+    
+    return raw_data
 
 
 @app.route('/api/buildings')
@@ -196,8 +263,7 @@ def buildings_endpoint():
         "max_lng": -114.05
     }
 
-    raw_data = fetch_building_data(limit=1000, bbox=downtown_bbox)
-    processed = process_buildings(raw_data)
+    processed = get_cached_processed_buildings(limit=1000, bbox=downtown_bbox)
     return jsonify(processed)
 
 @app.route("/api/filter-buildings", methods=["POST"])
@@ -205,7 +271,7 @@ def filter_buildings():
     data = request.get_json()
     user_query = data.get("query", "")
 
-    # First, get all buildings
+    # First, get all buildings using cached data
     downtown_bbox = {
         "max_lat": 51.06,
         "min_lat": 51.04,
@@ -213,8 +279,7 @@ def filter_buildings():
         "max_lng": -114.05
     }
     
-    raw_building_data = fetch_building_data(limit=1000, bbox=downtown_bbox)
-    buildings = process_buildings(raw_building_data)
+    buildings = get_cached_processed_buildings(limit=1000, bbox=downtown_bbox)
 
     filter_criteria = extract_filter_with_llm(user_query)
     if not filter_criteria:
@@ -239,14 +304,16 @@ def filter_buildings():
 
             v = float(raw_val)
             result = eval(f"v {op} {value}")
-            print(f"Comparing building {attr}={v} {op} {value}: {result}")
+            id = b.get("id", "unknown")
+            print(f"Comparing {id} building {attr}={v} {op} {value}: {result}")
             return result
         except Exception as e:
             print(f"Error matching building: {e}")
             return False
 
 
-    matched = [b for b in buildings if matches(b)]
+    matched = [b.get("id") for b in buildings if matches(b)]
+    print(matched)
     return jsonify(matched)
 
 @app.route('/api/land-use', methods=['GET'])
@@ -300,9 +367,8 @@ def buildings_with_land_use():
         "max_lng": -114.05
     }
 
-    # Fetch buildings
-    raw_building_data = fetch_building_data(limit=1000, bbox=downtown_bbox)
-    buildings = process_buildings(raw_building_data)
+    # Get cached buildings (without land use initially)
+    buildings = get_cached_processed_buildings(limit=1000, bbox=downtown_bbox)
     
     print(f"Found {len(buildings)} buildings")
     
@@ -362,10 +428,46 @@ def buildings_with_land_use():
             building['land_use'] = None
         return jsonify(buildings)
 
+@app.route('/api/cache/clear', methods=['POST'])
+def clear_cache():
+    """Clear the building cache - useful for development"""
+    global buildings_cache
+    buildings_cache = {
+        'raw_data': None,
+        'processed_data': None,
+        'cache_time': None,
+        'bbox': None
+    }
+    return jsonify({'message': 'Cache cleared successfully'})
+
+@app.route('/api/cache/status', methods=['GET'])
+def cache_status():
+    """Get cache status information"""
+    import time
+    current_time = time.time()
+    
+    status = {
+        'has_raw_data': buildings_cache['raw_data'] is not None,
+        'has_processed_data': buildings_cache['processed_data'] is not None,
+        'cache_time': buildings_cache['cache_time'],
+        'bbox': buildings_cache['bbox'],
+        'cache_age_seconds': current_time - buildings_cache['cache_time'] if buildings_cache['cache_time'] else None,
+        'cache_duration_seconds': CACHE_DURATION,
+        'is_cache_valid': (buildings_cache['cache_time'] is not None and 
+                          current_time - buildings_cache['cache_time'] < CACHE_DURATION)
+    }
+    
+    if buildings_cache['raw_data']:
+        status['raw_data_count'] = len(buildings_cache['raw_data'])
+    if buildings_cache['processed_data']:
+        status['processed_data_count'] = len(buildings_cache['processed_data'])
+    
+    return jsonify(status)
+
 if __name__ == "__main__":
     # Load environment variables for development
     debug_mode = os.getenv('FLASK_DEBUG', 'True').lower() in ['true', '1', 'yes']
-    port = int(os.getenv('FLASK_PORT', 5000))
+    port = int(os.getenv('FLASK_PORT', 5050))
     
     print(f"Starting Flask app...")
     print(f"Debug mode: {debug_mode}")
