@@ -94,9 +94,7 @@ function plot_buildings(buildings, scene) {
             xMeters: xMeters,
             yMeters: yMeters,
         };
-        building.height = heightInMeters; // Store height for easy access
-        building.landUse = building.land_use || null; // Ensure land use is available
-
+        
         const land_use = building.land_use; // Land use now comes with the building data
         const landUseColor = 0xffefed; // Default color if not found
 

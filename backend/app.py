@@ -7,77 +7,88 @@ import json
 from dotenv import load_dotenv
 from geojson import Point
 from shapely.geometry import shape, Point as ShapelyPoint
+from huggingface_hub.inference_api import InferenceApi
 
 # Load environment variables
 load_dotenv()
 
 def extract_filter_with_llm(user_query):
     """Use Hugging Face LLM to extract filter criteria from natural language"""
-    
-    
+        
     # Try pattern matching for natural language
     # nlp_result = extract_filter_nlp_patterns(user_query)
     # if nlp_result:
     #     print(f"NLP pattern matching worked: {nlp_result}")
     #     return nlp_result
     
-    # Get Hugging Face API token from environment
+    # Quirk with the code
+    # typing in buildings taller than 50 meters
+    # and buildinds above 50m
+    # net the same json, HOWEVER, after filtering, above shows only 20 buildings 
+    # but taller shows 72
     hf_token = os.getenv('HUGGINGFACE_API_TOKEN')
     if not hf_token:
         print("Warning: No Hugging Face API token found, all parsing methods failed")
         return None
-    
-    # Use LLM as last resort for complex queries
+
     print(f"Using LLM to parse: {user_query}")
+
+    api_url = "https://router.huggingface.co/hf-inference/models/HuggingFaceTB/SmolLM3-3B/v1/chat/completions"
+
+    prompt = f"""You are a helpful assistant. Convert the following natural language filter query to a JSON object.
     
-    try:
-        headers = {
-            "Authorization": f"Bearer {hf_token}",
-            "Content-Type": "application/json"
-        }
-        
-        api_url = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium"
-        
-        prompt = f"""Convert this to JSON with attribute, operator, value: {user_query}. Available attributes: 
-        height - height of the building from the roof to the ground
-        rooftop_elev_z - height of roof above sea level
-        grd_elev_min_z - minimum ground elevation above sea level
-        grd_elev_max_z - maximum ground elevation above sea level
-        land_use - land use code of the building
-        return json as {{"attribute": "height", "operator": ">", "value": 50}}.
-        . Output JSON only:"""
-        
-        payload = {
-            "inputs": prompt,
-            "parameters": {
-                "max_new_tokens": 30,
-                "temperature": 0.1
+Query: "{user_query}"
+
+Available attributes:
+- height (building height in meters)
+- rooftop_elev_z (roof elevation above sea level)
+- grd_elev_min_z (min ground elevation above sea level)
+- grd_elev_max_z (max ground elevation above sea level)
+- land_use (land use type of the building)
+
+Respond only with JSON like: {{"attribute": "height", "operator": ">", "value": 100}}"""
+
+    headers = {
+        "Authorization": f"Bearer {hf_token}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "messages": [
+            {
+                "role": "system",
+                "content": prompt
             }
-        }
-        
-        response = requests.post(api_url, headers=headers, json=payload, timeout=10)
-        
-        if response.status_code == 200:
-            result = response.json()
-            print(f"LLM response: {result}")
-            
-            # Try to extract JSON from response
-            if isinstance(result, list) and len(result) > 0:
-                generated_text = result[0].get('generated_text', '')
-                json_match = re.search(r'\{[^}]*\}', generated_text)
-                if json_match:
-                    try:
-                        filter_data = json.loads(json_match.group())
-                        if all(key in filter_data for key in ['attribute', 'operator', 'value']):
-                            return filter_data
-                    except json.JSONDecodeError:
-                        pass
-        
-        print(f"LLM parsing failed, status: {response.status_code}")
-        
+        ],
+        "model": "HuggingFaceTB/SmolLM3-3B"
+    }
+
+    try:
+        response = requests.post(api_url, headers=headers, json=payload)
+        response.raise_for_status()
+
+        result = response.json()
+        print("Raw output:", result)
+
+        # Extract content
+        content = result['choices'][0]['message']['content']
+
+        # Use regex to extract JSON block inside triple backticks
+        match = re.search(r'```json\s*(\{.*?\})\s*```', content, re.DOTALL)
+        if match:
+            json_str = match.group(1)
+            try:
+                parsed = json.loads(json_str)
+                print(parsed)
+                # {'attribute': 'height', 'operator': '>', 'value': 50}
+                return parsed
+            except json.JSONDecodeError as e:
+                print("Invalid JSON:", e)
+        else:
+            print("No JSON found in the content")
     except Exception as e:
         print(f"Error calling Hugging Face API: {e}")
-    
+
     return None
 
 def extract_filter_nlp_patterns(user_query):
@@ -157,7 +168,7 @@ def process_buildings(buildings):
             "rooftop_elev_x": building.get("rooftop_elev_x"),
             "rooftop_elev_y": building.get("rooftop_elev_y"),
             "rooftop_elev_z": building.get("rooftop_elev_z"),
-            "height": height,  # Add calculated height field
+            "height": str(height),  # Add calculated height field
             "land_use": building.get("land_use"),
             "polygon": building.get("polygon"),  # coordinates in GeoJSON format
         })
@@ -211,14 +222,29 @@ def filter_buildings():
 
     attr = filter_criteria["attribute"]
     op = filter_criteria["operator"]
-    value = float(filter_criteria["value"])
+    value = str(filter_criteria["value"])
 
     def matches(b):
         try:
-            v = float(b.get(attr, 0))
-            return eval(f"v {op} {value}")
-        except:
+            raw_val = b.get(attr)
+            if raw_val is None:
+                print(f"No attribute {attr} in building, skipping")
+                return False
+
+            if isinstance(raw_val, str):
+                raw_val = raw_val.lower().replace("m", "").strip()
+                if not raw_val.replace(".", "", 1).isdigit():
+                    print(f"Non-numeric height '{raw_val}' in building, skipping")
+                    return False
+
+            v = float(raw_val)
+            result = eval(f"v {op} {value}")
+            print(f"Comparing building {attr}={v} {op} {value}: {result}")
+            return result
+        except Exception as e:
+            print(f"Error matching building: {e}")
             return False
+
 
     matched = [b for b in buildings if matches(b)]
     return jsonify(matched)
