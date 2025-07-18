@@ -12,27 +12,86 @@ function latLngToXY(lat, lng, width, height) {
   return new THREE.Vector2(x - width / 2, y - height / 2);
 }
 
-function plot_buildings(buildings, scene, width, height) {
-    const spacing = 30;
-    for (let i = 0; i < buildings.length; i++) {
-        let currentBuilding = buildings[i].polygon.coordinates[0];
-        console.log("Current Building:", currentBuilding[0]);
-        let x = currentBuilding[0][0];
-        let y = currentBuilding[0][1];
-        
-        x-= centerCalgary.lng;
-        y-= centerCalgary.lat;
-        
-        const latLng = latLngToXY(y*spacing, x*spacing, width, height);
-        console.log("LatLng to XY:", latLng);
-
-        let geometry = new THREE.BoxGeometry(1, 1, 50); // Adjust size as needed
-        const material = new THREE.MeshBasicMaterial({ color: 0x00ff00});
-        const cube = new THREE.Mesh(geometry, material);
-        cube.position.set(latLng.x, latLng.y, 10);
-        scene.add(cube);
-    }
+function getPolygonCenter(points) {
+    const center = new THREE.Vector2(0, 0);
+    points.forEach(p => center.add(p));
+    return center.divideScalar(points.length);
 }
+
+// logitutde and latitude to meters
+function measure(lat1, lon1, lat2, lon2){  // generally used geo measurement function
+    var R = 6378.137; // Radius of earth in KM
+    var dLat = lat2 * Math.PI / 180 - lat1 * Math.PI / 180;
+    var dLon = lon2 * Math.PI / 180 - lon1 * Math.PI / 180;
+    var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    var d = R * c;
+    return d * 1000; // meters
+}
+
+function createShapeFromVertices(vertices, center, scale = 1) {
+    const shape = new THREE.Shape();
+    if (vertices.length < 3) return -1; // Need at least 3 points
+
+    // Convert each vertex to absolute XY meters relative to centerCalgary
+    const points = vertices.map(coord => {
+        const lon = coord[0];
+        const lat = coord[1];
+
+        // Calculate offsets in meters
+        const x = measure(center.lat, center.lng, center.lat, lon) * (lon > center.lng ? 1 : -1) * scale;
+        const y = measure(center.lat, center.lng, lat, center.lng) * (lat > center.lat ? 1 : -1) * scale;
+
+        return new THREE.Vector2(x, y);
+    });
+
+    // Start path at first point
+    shape.moveTo(points[0].x, points[0].y);
+
+    // Draw lines to remaining points
+    for (let i = 1; i < points.length; i++) {
+        shape.lineTo(points[i].x, points[i].y);
+    }
+
+    shape.closePath();
+
+    return shape;
+}
+
+
+function plot_buildings(buildings, scene) {
+    const sceneScale = 1; 
+    const center = centerCalgary;
+
+    buildings.forEach(building => {
+        if (!building?.polygon?.coordinates?.[0]) return;
+
+        const polygonCoords = building.polygon.coordinates[0];
+        const shape = createShapeFromVertices(polygonCoords, center, sceneScale);
+
+        if (shape === -1) return; // invalid shape
+
+        const heightInMeters = building.rooftop_elev_z - building.grd_elev_min_z || 50;
+        const heightValue = heightInMeters * sceneScale;
+
+        const geometry = new THREE.ExtrudeGeometry(shape, {
+            depth: heightValue,
+            bevelEnabled: false,
+        });
+
+        const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+        const mesh = new THREE.Mesh(geometry, material);
+
+        // Position at origin because shape is already relative to city center
+        mesh.position.set(0, 0, 0);
+
+        scene.add(mesh);
+    });
+}
+
+
 
 function App() {
   const [buildings, setBuildings] = useState([]);
@@ -53,7 +112,6 @@ function App() {
     sceneRef.current = scene;
 
     // Orthographic camera for flat map panning and zooming
-    // View size can be adjusted (e.g., 500 units visible)
     const viewSize = 500;
     const camera = new THREE.OrthographicCamera(
       (-aspect * viewSize) / 2,
@@ -75,11 +133,11 @@ function App() {
 
     // Controls for pan/zoom on flat map
     const controls = new MapControls(camera, renderer.domElement);
-    controls.enableDamping = false; // You can set true for smooth feel
+    controls.enableDamping = false; 
     controls.dampingFactor = 0.05;
-    controls.screenSpacePanning = true; // Important for map-style panning
-    controls.minZoom = 0.5;
-    controls.maxZoom = 5;
+    controls.screenSpacePanning = true; 
+    controls.minZoom = 0.001;
+    controls.maxZoom = 1000;
     controls.panSpeed = 0.5; // Slow pan
     controlsRef.current = controls;
 
@@ -110,7 +168,7 @@ function App() {
         sceneRef.current.remove(sceneRef.current.children[0]);
       }
       // Add grid helper back after clearing
-      const gridHelper = new THREE.GridHelper(1000, 50);
+      const gridHelper = new THREE.GridHelper(10000, 50);
       gridHelper.rotation.x = Math.PI / 2;
         gridHelper.position.set(0, 0, -15);
 
