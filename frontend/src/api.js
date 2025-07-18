@@ -52,3 +52,15 @@ export const filterBuildings = async (query) => {
     return [];
   }
 };
+
+export const filterBuildingsMultiple = async (queries) => {
+  try {
+    const response = await axios.post(`${API_URL}/filter-buildings`, {
+      queries: queries
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error filtering buildings with multiple queries:', error);
+    return [];
+  }
+};

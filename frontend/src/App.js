@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { fetchBuildings, fetchLandUse, filterBuildings } from "./api";
+import { fetchBuildings, fetchLandUse, filterBuildings, filterBuildingsMultiple } from "./api";
 import * as THREE from "three";
 import { MapControls } from 'three/examples/jsm/controls/MapControls';
 
@@ -151,7 +151,8 @@ function App() {
   const [highlightedBuildings, setHighlightedBuildings] = useState([]); // Store filtered buildings to highlight
   const [selectedBuilding, setSelectedBuilding] = useState(null);
   const [popupPosition, setPopupPosition] = useState({ x: 0, y: 0 });
-  const [filterQuery, setFilterQuery] = useState('');
+  const [filters, setFilters] = useState([{ id: 0, query: '' }]); // Array of filter objects
+  const [nextFilterId, setNextFilterId] = useState(1);
   const [isFiltering, setIsFiltering] = useState(false);
   const [buildingsLoaded, setBuildingsLoaded] = useState(false); // Trigger for re-render
   const mountRef = useRef(null);
@@ -285,10 +286,28 @@ function App() {
       .catch((err) => console.error("Failed to fetch buildings:", err));
   }, []);
 
-  // Filter handler
+  // Add a new filter
+  const addFilter = () => {
+    setFilters(prev => [...prev, { id: nextFilterId, query: '' }]);
+    setNextFilterId(prev => prev + 1);
+  };
+
+  // Remove a filter
+  const removeFilter = (filterId) => {
+    setFilters(prev => prev.filter(f => f.id !== filterId));
+  };
+
+  // Update a filter query
+  const updateFilter = (filterId, query) => {
+    setFilters(prev => prev.map(f => f.id === filterId ? { ...f, query } : f));
+  };
+
+  // Filter handler for multiple filters
   const handleFilter = async () => {
-    if (!filterQuery.trim()) {
-      setHighlightedBuildings([]); // Reset highlights if no query
+    const activeFilters = filters.filter(f => f.query.trim());
+    
+    if (activeFilters.length === 0) {
+      setHighlightedBuildings([]); // Reset highlights if no active filters
       // Reset all building colors
       for (const building of buildings_dict.current.values()) {
         building.colour = 0xcccccc; // Reset to default gray
@@ -305,18 +324,55 @@ function App() {
         building.isHighlighted = false;
       }
       
-      const filteredData = await filterBuildings(filterQuery);
-      console.log("Filtered buildings:", filteredData);
+      // Process all filters - use batch processing if multiple filters
+      let allFilteredResults = [];
+      
+      if (activeFilters.length === 1) {
+        // Single filter - use existing API
+        try {
+          const filteredData = await filterBuildings(activeFilters[0].query);
+          console.log(`Single filter "${activeFilters[0].query}" returned:`, filteredData);
+          allFilteredResults = filteredData;
+        } catch (error) {
+          console.error(`Filter "${activeFilters[0].query}" failed:`, error);
+        }
+      } else {
+        // Multiple filters - use new batch API
+        try {
+          const queryStrings = activeFilters.map(f => f.query);
+          const filteredData = await filterBuildingsMultiple(queryStrings);
+          console.log(`Multiple filters returned:`, filteredData);
+          allFilteredResults = filteredData;
+        } catch (error) {
+          console.error('Multiple filters failed:', error);
+          // Fallback to individual filter processing
+          for (const filter of activeFilters) {
+            try {
+              const filteredData = await filterBuildings(filter.query);
+              console.log(`Filter "${filter.query}" returned:`, filteredData);
+              allFilteredResults.push(...filteredData);
+            } catch (error) {
+              console.error(`Filter "${filter.query}" failed:`, error);
+            }
+          }
+          // Remove duplicates from fallback processing
+          allFilteredResults = [...new Set(allFilteredResults)];
+        }
+      }
+      
+      console.log("Final filtered buildings:", allFilteredResults);
       
       // Highlight the filtered buildings
       let highlightedCount = 0;
-      for (let i = 0; i < filteredData.length; i++) {
-        const buildingId = filteredData[i]; // filteredData contains IDs
+      const colors = [0xff4444, 0x44ff44, 0x4444ff, 0xffff44, 0xff44ff, 0x44ffff]; // Multiple colors for different filters
+      
+      for (let i = 0; i < allFilteredResults.length; i++) {
+        const buildingId = allFilteredResults[i];
         console.log("Looking for building ID:", buildingId, "Type:", typeof buildingId);
         const building = buildings_dict.current.get(buildingId);
         if (building) {
-          building.colour = 0xff4444; // Red for highlighted
-          building.isHighlighted = true; // Add highlight flag
+          building.colour = colors[highlightedCount % colors.length]; // Cycle through colors
+          building.isHighlighted = true;
           highlightedCount++;
         } else {
           console.warn("Building not found in dictionary:", buildingId);
@@ -327,22 +383,22 @@ function App() {
           const buildingNum = buildings_dict.current.get(numberId);
           if (buildingStr) {
             console.log("Found building with string ID:", stringId);
-            buildingStr.colour = 0xff4444;
+            buildingStr.colour = colors[highlightedCount % colors.length];
             buildingStr.isHighlighted = true;
             highlightedCount++;
           } else if (buildingNum) {
             console.log("Found building with number ID:", numberId);
-            buildingNum.colour = 0xff4444;
+            buildingNum.colour = colors[highlightedCount % colors.length];
             buildingNum.isHighlighted = true;
             highlightedCount++;
           }
         }
       }
       
-      console.log(`Successfully highlighted ${highlightedCount} out of ${filteredData.length} buildings`);
+      console.log(`Successfully highlighted ${highlightedCount} out of ${allFilteredResults.length} buildings`);
       
       // Trigger re-render by updating state
-      setHighlightedBuildings(filteredData);
+      setHighlightedBuildings(allFilteredResults);
     } catch (error) {
       console.error('Filter failed:', error);
       // Keep current highlights on error
@@ -351,9 +407,10 @@ function App() {
     }
   };
 
-  // Reset filter
+  // Reset all filters
   const handleResetFilter = () => {
-    setFilterQuery('');
+    setFilters([{ id: 0, query: '' }]);
+    setNextFilterId(1);
     setHighlightedBuildings([]);
     // Reset all building colors
     for (const building of buildings_dict.current.values()) {
@@ -377,24 +434,80 @@ function App() {
         padding: '15px',
         borderRadius: '8px',
         boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
-        minWidth: '300px'
+        minWidth: '350px',
+        maxHeight: '80vh',
+        overflowY: 'auto'
       }}>
-        <h3 style={{ margin: '0 0 10px 0', fontSize: '16px' }}>Highlight Buildings</h3>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <input
-            type="text"
-            value={filterQuery}
-            onChange={(e) => setFilterQuery(e.target.value)}
-            placeholder="e.g., tall buildings above 50"
+        <h3 style={{ margin: '0 0 10px 0', fontSize: '16px' }}>Multiple Filters</h3>
+        
+        {/* Filter Inputs */}
+        {filters.map((filter, index) => (
+          <div key={filter.id} style={{ 
+            display: 'flex', 
+            gap: '8px', 
+            alignItems: 'center', 
+            marginBottom: '8px',
+            padding: '8px',
+            background: 'rgba(240, 240, 240, 0.5)',
+            borderRadius: '4px'
+          }}>
+            <span style={{ 
+              minWidth: '20px', 
+              fontSize: '12px', 
+              color: '#666',
+              fontWeight: 'bold'
+            }}>
+              {index + 1}:
+            </span>
+            <input
+              type="text"
+              value={filter.query}
+              onChange={(e) => updateFilter(filter.id, e.target.value)}
+              placeholder="e.g., tall buildings above 50"
+              style={{
+                flex: 1,
+                padding: '6px',
+                border: '1px solid #ddd',
+                borderRadius: '4px',
+                fontSize: '13px'
+              }}
+              onKeyPress={(e) => e.key === 'Enter' && handleFilter()}
+            />
+            {filters.length > 1 && (
+              <button
+                onClick={() => removeFilter(filter.id)}
+                style={{
+                  padding: '4px 8px',
+                  backgroundColor: '#dc3545',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: 'pointer',
+                  fontSize: '12px'
+                }}
+              >
+                ×
+              </button>
+            )}
+          </div>
+        ))}
+        
+        {/* Action Buttons */}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '10px' }}>
+          <button
+            onClick={addFilter}
             style={{
-              flex: 1,
-              padding: '8px',
-              border: '1px solid #ddd',
+              padding: '6px 12px',
+              backgroundColor: '#28a745',
+              color: 'white',
+              border: 'none',
               borderRadius: '4px',
-              fontSize: '14px'
+              cursor: 'pointer',
+              fontSize: '13px'
             }}
-            onKeyPress={(e) => e.key === 'Enter' && handleFilter()}
-          />
+          >
+            + Add Filter
+          </button>
           <button
             onClick={handleFilter}
             disabled={isFiltering}
@@ -405,10 +518,11 @@ function App() {
               border: 'none',
               borderRadius: '4px',
               cursor: isFiltering ? 'not-allowed' : 'pointer',
-              fontSize: '14px'
+              fontSize: '14px',
+              fontWeight: 'bold'
             }}
           >
-            {isFiltering ? 'Filtering...' : 'Filter'}
+            {isFiltering ? 'Filtering...' : 'Apply Filters'}
           </button>
           <button
             onClick={handleResetFilter}
@@ -422,15 +536,35 @@ function App() {
               fontSize: '14px'
             }}
           >
-            Reset
+            Reset All
           </button>
         </div>
+        
         <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
           Showing {buildings.length} buildings total, {highlightedBuildings.length} highlighted
         </div>
         <div style={{ fontSize: '11px', color: '#999', marginTop: '4px' }}>
           Examples: "height above 100", "tall buildings above 50", "ground level above 1049"
         </div>
+        
+        {/* Active Filters Display */}
+        {filters.filter(f => f.query.trim()).length > 0 && (
+          <div style={{ marginTop: '10px', fontSize: '11px' }}>
+            <strong>Active Filters:</strong>
+            {filters.filter(f => f.query.trim()).map((filter, index) => (
+              <div key={filter.id} style={{ 
+                color: '#555', 
+                marginLeft: '10px',
+                padding: '2px 6px',
+                background: `rgba(${index === 0 ? '255,68,68' : index === 1 ? '68,255,68' : index === 2 ? '68,68,255' : '255,255,68'}, 0.2)`,
+                borderRadius: '3px',
+                margin: '2px 0'
+              }}>
+                {index + 1}. {filter.query}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <h1>Flat Map with Buildings</h1>

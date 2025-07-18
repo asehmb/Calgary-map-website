@@ -42,6 +42,7 @@ Available attributes:
 - grd_elev_min_z (min ground elevation above sea level)
 - grd_elev_max_z (max ground elevation above sea level)
 - land_use (land use type of the building)
+-
 
 - larger,bigger,above,taller: >
 - smaller,shorter: <
@@ -160,6 +161,24 @@ def get_api_params(base_params=None):
     params = base_params or {}
     return params
 
+def center_point(polygon):
+    """Calculate the center point of a polygon"""
+    if not polygon or not polygon.get("coordinates"):
+        return None
+    
+    coords = polygon["coordinates"][0]  # Assuming first ring is the outer boundary
+    if not coords:
+        return None
+    
+    x_coords = [coord[0] for coord in coords]
+    y_coords = [coord[1] for coord in coords]
+    
+    center_x = sum(x_coords) / len(x_coords)
+    center_y = sum(y_coords) / len(y_coords)    
+
+    # Return as a tuple (longitude, latitude)
+    return (center_x, center_y)
+
 def process_buildings(buildings):
     processed = []
     building_count = 0
@@ -168,6 +187,7 @@ def process_buildings(buildings):
         rooftop_z = float(building.get("rooftop_elev_z") or 0)
         ground_z = float(building.get("grd_elev_min_z") or 0)
         height = rooftop_z - ground_z if rooftop_z and ground_z else 0
+        longitude, latitude = center_point(building.get("polygon", {})) or (0, 0)
         
         processed.append({
             "grd_elev_min_x": building.get("grd_elev_min_x"),
@@ -185,6 +205,8 @@ def process_buildings(buildings):
             "struct_id": building.get("struct_id"),
             "id": building_count,
             "colour": 0xcccccc, # default color for buildings
+            "longitude": longitude,
+            "latitude": latitude,
         })
         building_count += 1
     return processed
@@ -270,8 +292,17 @@ def buildings_endpoint():
 def filter_buildings():
     data = request.get_json()
     user_query = data.get("query", "")
+    user_queries = data.get("queries", [])  # Support multiple queries
+    
+    # Handle both single query and multiple queries
+    if user_queries:
+        queries_to_process = user_queries
+    elif user_query:
+        queries_to_process = [user_query]
+    else:
+        return jsonify({"error": "No query or queries provided"}), 400
 
-    # First, get all buildings using cached data
+    # Get cached buildings
     downtown_bbox = {
         "max_lat": 51.06,
         "min_lat": 51.04,
@@ -280,41 +311,53 @@ def filter_buildings():
     }
     
     buildings = get_cached_processed_buildings(limit=1000, bbox=downtown_bbox)
+    
+    all_matched_ids = set()  # Use set to avoid duplicates
+    
+    # loop through all queries for multiple queries
+    for query in queries_to_process:
+        print(f"Processing query: '{query}'")
+        
+        filter_criteria = extract_filter_with_llm(query)
+        if not filter_criteria:
+            print(f"Could not extract filter from query: '{query}'")
+            continue
 
-    filter_criteria = extract_filter_with_llm(user_query)
-    if not filter_criteria:
-        return jsonify({"error": "Could not extract filter"}), 400
+        attr = filter_criteria["attribute"]
+        op = filter_criteria["operator"]
+        value = str(filter_criteria["value"])
 
-    attr = filter_criteria["attribute"]
-    op = filter_criteria["operator"]
-    value = str(filter_criteria["value"])
-
-    def matches(b):
-        try:
-            raw_val = b.get(attr)
-            if raw_val is None:
-                print(f"No attribute {attr} in building, skipping")
-                return False
-
-            if isinstance(raw_val, str):
-                raw_val = raw_val.lower().replace("m", "").strip()
-                if not raw_val.replace(".", "", 1).isdigit():
-                    print(f"Non-numeric height '{raw_val}' in building, skipping")
+        def matches(b):
+            try:
+                raw_val = b.get(attr)
+                if raw_val is None:
                     return False
 
-            v = float(raw_val)
-            result = eval(f"v {op} {value}")
-            id = b.get("id", "unknown")
-            print(f"Comparing {id} building {attr}={v} {op} {value}: {result}")
-            return result
-        except Exception as e:
-            print(f"Error matching building: {e}")
-            return False
+                if isinstance(raw_val, str):
+                    raw_val = raw_val.lower().replace("m", "").strip()
+                    if not raw_val.replace(".", "", 1).isdigit():
+                        return False
 
+                v = float(raw_val)
+                result = eval(f"v {op} {value}")
+                if result:
+                    building_id = b.get("id", "unknown")
+                    print(f"Query '{query}': Building {building_id} matches ({attr}={v} {op} {value})")
+                return result
+            except Exception as e:
+                print(f"Error matching building for query '{query}': {e}")
+                return False
 
-    matched = [b.get("id") for b in buildings if matches(b)]
-    print(matched)
-    return jsonify(matched)
+        # Find matches for this query
+        query_matches = [b.get("id") for b in buildings if matches(b)]
+        all_matched_ids.update(query_matches)
+        print(f"Query '{query}' found {len(query_matches)} matches")
+    
+    final_matches = list(all_matched_ids)
+    print(f"Total unique matches across all queries: {len(final_matches)}")
+    print(f"Matched building IDs: {final_matches}")
+    
+    return jsonify(final_matches)
 
 @app.route('/api/land-use', methods=['GET'])
 def get_land_use():
