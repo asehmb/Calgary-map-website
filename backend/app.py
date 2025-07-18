@@ -619,13 +619,15 @@ def list_user_filters():
         return jsonify({"success": False, "error": str(e)}), 500
 
 if __name__ == "__main__":
-    # Load environment variables for development
+    # Load environment variables
     debug_mode = os.getenv('FLASK_DEBUG', 'True').lower() in ['true', '1', 'yes']
-    port = int(os.getenv('FLASK_PORT', 5050))
+    port = int(os.getenv('PORT', os.getenv('FLASK_PORT', 5050)))  # Render uses PORT env var
+    host = os.getenv('HOST', '0.0.0.0')  # Bind to all interfaces for Render
     
     print(f"Starting Flask app...")
     print(f"Debug mode: {debug_mode}")
+    print(f"Host: {host}")
     print(f"Port: {port}")
     print(f"API Token configured: {'Yes' if CALGARY_APP_TOKEN else 'No'}")
     
-    app.run(debug=debug_mode, port=port)
+    app.run(debug=debug_mode, host=host, port=port)

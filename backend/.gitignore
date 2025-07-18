@@ -10,6 +10,7 @@ __pycache__/
 # testing files
 *.log
 test.*
+check_deployment.sh
 
 # C extensions
 *.so

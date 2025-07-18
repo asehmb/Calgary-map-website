@@ -8,6 +8,16 @@ backend/__pycache__
 .pnp.js
 node_modules/
 
+# database files
+*.sqlite3
+*.db
+
+# testing files
+*.log
+test.*
+check-deployment.sh
+
+
 # testing
 /coverage
 
