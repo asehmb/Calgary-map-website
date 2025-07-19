@@ -45,11 +45,11 @@ Available attributes:
 - rooftop_elev_z (roof elevation above sea level)
 - grd_elev_min_z (min ground elevation above sea level)
 - grd_elev_max_z (max ground elevation above sea level)
-- land_use (land use type of the building)
--
+- land_use (land use type / land code of the building)
 
 - larger,bigger,above,taller: >
 - smaller,shorter: <
+- is: ==
 
 Respond only with JSON like: {{"attribute": "height", "operator": ">", "value": 100}}"""
 
@@ -143,7 +143,7 @@ app = Flask(__name__)
 
 # Configure CORS - Allow all origins for Render deployment
 # This is needed because Render can assign different subdomains
-CORS(app, origins=["https://calgary-map-frontend.onrender.com", "localhost:3000"], supports_credentials=True)
+CORS(app, origins=["https://calgary-map-frontend.onrender.com", "https://localhost:3000"], supports_credentials=True)
 
 # API Configuration from environment variables
 CALGARY_LAND_USE_API = os.getenv('CALGARY_LAND_USE_API', 'https://data.calgary.ca/resource/mw9j-jik5.json')

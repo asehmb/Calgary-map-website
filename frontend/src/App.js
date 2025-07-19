@@ -147,118 +147,142 @@ function plot_buildings(buildings, scene, highlight_color = 0xff4444) {
 
 
 function App() {
-  const [highlightedBuildings, setHighlightedBuildings] = useState([]); // Store filtered buildings to highlight
-  const [selectedBuilding, setSelectedBuilding] = useState(null);
-  const [popupPosition, setPopupPosition] = useState({ x: 0, y: 0 });
-  const [filters, setFilters] = useState([{ id: 0, query: '' }]); // Array of filter objects
-  const [nextFilterId, setNextFilterId] = useState(1);
-  const [isFiltering, setIsFiltering] = useState(false);
-  const [buildingsLoaded, setBuildingsLoaded] = useState(false); // Trigger for re-render
-  
-  // Filter management state
-  const [username, setUsername] = useState('');
-  const [filterName, setFilterName] = useState('');
-  const [savedFilters, setSavedFilters] = useState([]);
-  const [showSaveDialog, setShowSaveDialog] = useState(false);
-  const [showLoadDialog, setShowLoadDialog] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  
-  const mountRef = useRef(null);
-  const sceneRef = useRef(null);
-  const rendererRef = useRef(null);
-  const cameraRef = useRef(null);
-  const controlsRef = useRef(null);
-  const raycasterRef = useRef(new THREE.Raycaster());
-  const mouseRef = useRef(new THREE.Vector2());
-  const buildings_dict = useRef(new Map()); // This will hold the building data
+    const [highlightedBuildings, setHighlightedBuildings] = useState([]); // Store filtered buildings to highlight
+    const [selectedBuilding, setSelectedBuilding] = useState(null);
+    const [popupPosition, setPopupPosition] = useState({ x: 0, y: 0 });
+    const [filters, setFilters] = useState([{ id: 0, query: '' }]); // Array of filter objects
+    const [nextFilterId, setNextFilterId] = useState(1);
+    const [isFiltering, setIsFiltering] = useState(false);
+    const [buildingsLoaded, setBuildingsLoaded] = useState(false); // Trigger for re-render
+    
+    // Filter management state
+    const [username, setUsername] = useState('');
+    const [filterName, setFilterName] = useState('');
+    const [savedFilters, setSavedFilters] = useState([]);
+    const [showSaveDialog, setShowSaveDialog] = useState(false);
+    const [showLoadDialog, setShowLoadDialog] = useState(false);
+    const [showUserPanel, setShowUserPanel] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
+    
+    const mountRef = useRef(null);
+    const sceneRef = useRef(null);
+    const rendererRef = useRef(null);
+    const cameraRef = useRef(null);
+    const controlsRef = useRef(null);
+    const raycasterRef = useRef(new THREE.Raycaster());
+    const mouseRef = useRef(new THREE.Vector2());
+    const buildings_dict = useRef(new Map());
 
-  useEffect(() => {
-    const width = window.innerWidth;
-    const height = window.innerHeight;
-    const aspect = width / height;
-    const mount = mountRef.current;
+    // setup three js scene   
+    useEffect(() => {
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        const aspect = width / height;
+        const mount = mountRef.current;
 
-    // Scene setup
-    const scene = new THREE.Scene();
-    sceneRef.current = scene;
+        // Scene setup
+        const scene = new THREE.Scene();
+        sceneRef.current = scene;
 
-    // Orthographic camera for flat map panning and zooming
-    const viewSize = 500;
-    const camera = new THREE.OrthographicCamera(
-      (-aspect * viewSize) / 2,
-      (aspect * viewSize) / 2,
-      viewSize / 2,
-      -viewSize / 2,
-      0.1,
-      2000
-    );
-    camera.position.set(0, 0, 1000); // Pull camera away from flat plane
-    camera.lookAt(0, 0, 0);
-    cameraRef.current = camera;
+        // Orthographic camera for flat map panning and zooming
+        const viewSize = 200;
+        const camera = new THREE.OrthographicCamera(
+        (-aspect * viewSize) / 2,
+        (aspect * viewSize) / 2,
+        viewSize / 2,
+        -viewSize / 2,
+        0.1,
+        2000
+        );
+        camera.position.set(0, 0, 1000); // Pull camera away from flat plane
+        camera.lookAt(0, 0, 0);
+        cameraRef.current = camera;
 
-    // Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(width, height);
-    mountRef.current.appendChild(renderer.domElement);
-    rendererRef.current = renderer;
+        // Renderer
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(width, height);
+        renderer.domElement.style.display = 'block';
+        renderer.domElement.style.margin = '0';
+        renderer.domElement.style.padding = '0';
+        mountRef.current.appendChild(renderer.domElement);
+        rendererRef.current = renderer;
 
-    // Controls for pan/zoom on flat map
-    const controls = new MapControls(camera, renderer.domElement);
-    controls.enableDamping = false; 
-    controls.dampingFactor = 0.05;
-    controls.screenSpacePanning = true; 
-    controls.minZoom = 0.001;
-    controls.maxZoom = 1000;
-    controls.panSpeed = 0.5; // Slow pan
-    controlsRef.current = controls;
+        // Controls for pan/zoom on flat map
+        const controls = new MapControls(camera, renderer.domElement);
+        controls.enableDamping = false; 
+        controls.dampingFactor = 0.05;
+        controls.screenSpacePanning = true; 
+        controls.minZoom = 0.001;
+        controls.maxZoom = 1000;
+        controls.panSpeed = 0.5; // Slow pan
+        controlsRef.current = controls;
 
-    // Mouse click handler
-    const onMouseClick = (event) => {
-      // Calculate mouse position in normalized device coordinates (-1 to +1)
-      const rect = renderer.domElement.getBoundingClientRect();
-      mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        // Mouse click handler
+        const onMouseClick = (event) => {
+        // Calculate mouse position in normalized device coordinates (-1 to +1)
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-      // Update the picking ray with the camera and mouse position
-      raycasterRef.current.setFromCamera(mouseRef.current, camera);
+        // Update the picking ray with the camera and mouse position
+        raycasterRef.current.setFromCamera(mouseRef.current, camera);
 
-      // Calculate objects intersecting the picking ray
-      const intersects = raycasterRef.current.intersectObjects(scene.children);
+        // Calculate objects intersecting the picking ray
+        const intersects = raycasterRef.current.intersectObjects(scene.children);
 
-      if (intersects.length > 0) {
-        const clickedObject = intersects[0].object;
-        if (clickedObject.userData.building) {
-          setSelectedBuilding(clickedObject.userData);
-          setPopupPosition({ x: event.clientX, y: event.clientY });
+        if (intersects.length > 0) {
+            const clickedObject = intersects[0].object;
+            if (clickedObject.userData.building) {
+            setSelectedBuilding(clickedObject.userData);
+            setPopupPosition({ x: event.clientX, y: event.clientY });
+            }
+        } else {
+            setSelectedBuilding(null);
         }
-      } else {
-        setSelectedBuilding(null);
-      }
-    };
+        };
 
-    renderer.domElement.addEventListener('click', onMouseClick);
+        renderer.domElement.addEventListener('click', onMouseClick);
 
-    // Optional: Add a grid helper for reference
-    const gridHelper = new THREE.GridHelper(1000, 50);
-    gridHelper.rotation.x = Math.PI / 2;
-    gridHelper.position.set(0, 0, 0);
-    scene.add(gridHelper);
+        // Handle window resize
+        const handleResize = () => {
+        const newWidth = window.innerWidth;
+        const newHeight = window.innerHeight;
+        const newAspect = newWidth / newHeight;
 
-    // Animation loop
-    const animate = () => {
-      requestAnimationFrame(animate);
-      controls.update();
-      renderer.render(scene, camera);
-    };
-    animate();
+        // Update camera
+        camera.left = (-newAspect * viewSize) / 2;
+        camera.right = (newAspect * viewSize) / 2;
+        camera.top = viewSize / 2;
+        camera.bottom = -viewSize / 2;
+        camera.updateProjectionMatrix();
 
-    // Clean up on unmount
-    return () => {
-      renderer.domElement.removeEventListener('click', onMouseClick);
-      mount.removeChild(renderer.domElement);
-    };
-  }, []);
+        // Update renderer
+        renderer.setSize(newWidth, newHeight);
+        };
+
+        window.addEventListener('resize', handleResize);
+
+        const gridHelper = new THREE.GridHelper(500, 50);
+        gridHelper.rotation.x = Math.PI / 2;
+        gridHelper.position.set(0, 0, 0);
+        scene.add(gridHelper);
+
+        // Animation loop
+        const animate = () => {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+        };
+        animate();
+
+        // Clean up on unmount
+        return () => {
+        window.removeEventListener('resize', handleResize);
+        renderer.domElement.removeEventListener('click', onMouseClick);
+        mount.removeChild(renderer.domElement);
+        };
+    }, []);
 
   // main loop
   useEffect(() => {
@@ -268,7 +292,7 @@ function App() {
         sceneRef.current.remove(sceneRef.current.children[0]);
       }
       // Add grid helper back after clearing
-      const gridHelper = new THREE.GridHelper(1000, 50);
+      const gridHelper = new THREE.GridHelper(500, 50);
       gridHelper.rotation.x = Math.PI / 2;
       gridHelper.position.set(0, 0, -15);
 
@@ -282,7 +306,7 @@ function App() {
   useEffect(() => {
     fetchBuildings()
       .then((data) => {
-        // save buildings to global variable for later use
+        // save buildings to dictionary
         buildings_dict.current.clear(); // Clear existing data
         for (let i = 0; i < data.length; i++) {
           buildings_dict.current.set(data[i].id, data[i]);
@@ -583,433 +607,515 @@ function App() {
 
 return (
     <div>
-            <div style={{
-                    position: 'absolute',
-                    top: '10px',
-                    right: '10px',
-                    zIndex: 1000,
-                    background: 'rgba(255, 255, 255, 0.9)',
-                    padding: '15px',
-                    borderRadius: '8px',
-                    boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
-                    minWidth: '350px',
-                    maxHeight: '80vh',
-                    overflowY: 'auto'
-            }}>
-                    <input
-                            type="text"
-                            value={username}
-                            onChange={(e) => setUsername(e.target.value)}
-                            placeholder="enter username"
-                            style={{
-                                    width: '90%',
-                                    padding: '5%',
-                                    border: '1px solid #ddd',
-                                    borderRadius: '4px',
-                                    fontSize: '14px'
-                            }}
-                    />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px' }}>
-                    <button
-                        onClick={() => setShowSaveDialog(true)}
-                        disabled={!username.trim() || filters.filter(f => f.query.trim()).length === 0}
-                        style={{
-                        padding: '8px 16px',
-                        backgroundColor: !username.trim() || filters.filter(f => f.query.trim()).length === 0 ? '#ccc' : '#007bff',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        fontSize: '14px',
-                        fontWeight: 'bold',
-                        width: '49.5%',
-                        cursor: !username.trim() || filters.filter(f => f.query.trim()).length === 0 ? 'not-allowed' : 'pointer'
-                        }}
-                    >
-                        Save Filters
-                    </button>
-                    <button
-                        onClick={() => setShowLoadDialog(true)}
-                        disabled={!username.trim()}
-                        style={{
-                        padding: '8px 16px',
-                        backgroundColor: !username.trim() ? '#ccc' : '#28a745',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        fontSize: '14px',
-                        fontWeight: 'bold',
-                        width: '49.5%',
-                        cursor: !username.trim() ? 'not-allowed' : 'pointer'
-                        }}
-                    >
-                        Load Filters
-                    </button>
-                    </div>
-
-            </div>
-        {/* Filter Controls */}
+        {/* If user clicks on login */}
+        {showUserPanel && (
         <div style={{
-            position: 'absolute',
-            bottom: '10px',
-            right: '10px',
-            zIndex: 1000,
-            background: 'rgba(255, 255, 255, 0.9)',
-            padding: '15px',
-            borderRadius: '8px',
-            boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
-            minWidth: '350px',
-            maxHeight: '80vh',
-            overflowY: 'auto'
+                position: 'absolute',
+                top: '10px',
+                right: '10px',
+                zIndex: 1000,
+                background: 'rgba(255, 255, 255, 0.9)',
+                padding: '15px',
+                borderRadius: '8px',
+                boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+                minWidth: '350px',
+                maxHeight: '80vh',
+                overflowY: 'auto',
         }}>
-            <h3 style={{ margin: '0 0 10px 0', fontSize: '16px' }}>Multiple Filters</h3>
-            
-            {/* Filter Inputs */}
-            {filters.map((filter, index) => (
-                <div key={filter.id} style={{ 
-                    display: 'flex', 
-                    gap: '8px', 
-                    alignItems: 'center', 
-                    marginBottom: '8px',
-                    padding: '8px',
-                    background: 'rgba(240, 240, 240, 0.5)',
-                    borderRadius: '4px'
-                }}>
-                    <span style={{ 
-                        minWidth: '20px', 
-                        fontSize: '12px', 
-                        color: '#666',
-                        fontWeight: 'bold'
-                    }}>
-                        {index + 1}:
-                    </span>
-                    <input
+            <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '10px'
+            }}>
+            <p style ={{ 
+                fontSize: '16px', 
+                fontWeight: 'bold', 
+                textAlign: "Left",
+                cursor: 'pointer',
+                margin: '0 0 10px 0'
+                    }}
+                    >
+            Login
+            </p>
+            <p style ={{ 
+                fontSize: '16px', 
+                fontWeight: 'bold', 
+                textAlign: "right",
+                cursor: 'pointer',
+                margin: '0 0 10px 0'
+                    }}
+                    onClick={() => setShowUserPanel(false)}>
+            X
+            </p>
+            </div>
+                <input
                         type="text"
-                        value={filter.query}
-                        onChange={(e) => updateFilter(filter.id, e.target.value)}
-                        placeholder="e.g., tall buildings above 50"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        placeholder="enter username"
                         style={{
-                            flex: 1,
-                            padding: '6px',
-                            border: '1px solid #ddd',
-                            borderRadius: '4px',
-                            fontSize: '13px'
+                                width: '90%',
+                                padding: '5%',
+                                border: '1px solid #ddd',
+                                borderRadius: '4px',
+                                fontSize: '14px'
                         }}
-                        onKeyPress={(e) => e.key === 'Enter' && handleFilter()}
-                    />
-                    {filters.length > 1 && (
-                        <button
-                            onClick={() => removeFilter(filter.id)}
-                            style={{
-                                padding: '4px 8px',
-                                backgroundColor: '#dc3545',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '3px',
-                                cursor: 'pointer',
-                                fontSize: '12px'
-                            }}
-                        >
-                            ×
-                        </button>
-                    )}
+                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px' }}>
+                <button
+                    onClick={() => setShowSaveDialog(true)}
+                    disabled={!username.trim() || filters.filter(f => f.query.trim()).length === 0}
+                    style={{
+                    padding: '8px 16px',
+                    backgroundColor: !username.trim() || filters.filter(f => f.query.trim()).length === 0 ? '#ccc' : '#007bff',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    fontSize: '14px',
+                    fontWeight: 'bold',
+                    width: '49.5%',
+                    cursor: !username.trim() || filters.filter(f => f.query.trim()).length === 0 ? 'not-allowed' : 'pointer'
+                    }}
+                >
+                    Save Filters
+                </button>
+                <button
+                    onClick={() => setShowLoadDialog(true)}
+                    disabled={!username.trim()}
+                    style={{
+                    padding: '8px 16px',
+                    backgroundColor: !username.trim() ? '#ccc' : '#28a745',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    fontSize: '14px',
+                    fontWeight: 'bold',
+                    width: '49.5%',
+                    cursor: !username.trim() ? 'not-allowed' : 'pointer'
+                    }}
+                >
+                    Load Filters
+                </button>
                 </div>
-            ))}
-            
-            {/* Action Buttons */}
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '10px' }}>
-                <button
-                    onClick={addFilter}
+
+        </div>
+        )}
+        {/* if user panel off */}
+        {!showUserPanel && (
+        <div style={{
+                position: 'absolute',
+                top: '10px',
+                right: '10px',
+                zIndex: 1000,
+                background: 'rgba(255, 255, 255, 0.9)',
+                padding: '15px',
+                borderRadius: '8px',
+                boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+                maxHeight: '80vh',
+                overflowY: 'auto'
+        }}
+        >
+            <p style={{ 
+                fontSize: '16px', 
+                fontWeight: 'bold', 
+                textAlign: "Left",
+                margin: '0 0 10px 0'
+            }}>
+            3D map of calgary buildings
+            </p>
+            <button
                     style={{
-                        padding: '6px 12px',
-                        backgroundColor: '#28a745',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        fontSize: '13px'
+                    padding: '8px 16px',
+                    backgroundColor: '#007bff',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    fontSize: '14px',
+                    fontWeight: 'bold',
+                    width: '100%',
+                    cursor: 'pointer',
+
                     }}
+                    onClick={() => setShowUserPanel(true)}
+
                 >
-                    + Add Filter
+                    Login
                 </button>
-                <button
-                    onClick={handleFilter}
-                    disabled={isFiltering}
+        </div>
+    )}
+    {/* Filter Controls */}
+    <div style={{
+        position: 'absolute',
+        bottom: '10px',
+        right: '10px',
+        zIndex: 1000,
+        background: 'rgba(255, 255, 255, 0.9)',
+        padding: '15px',
+        borderRadius: '8px',
+        boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+        minWidth: '350px',
+        maxHeight: '80vh',
+        overflowY: 'auto'
+    }}>
+        <h3 style={{ margin: '0 0 10px 0', fontSize: '16px' }}>Multiple Filters</h3>
+        
+        {/* Filter Inputs */}
+        {filters.map((filter, index) => (
+            <div key={filter.id} style={{ 
+                display: 'flex', 
+                gap: '8px', 
+                alignItems: 'center', 
+                marginBottom: '8px',
+                padding: '8px',
+                background: 'rgba(240, 240, 240, 0.5)',
+                borderRadius: '4px'
+            }}>
+                <span style={{ 
+                    minWidth: '20px', 
+                    fontSize: '12px', 
+                    color: '#666',
+                    fontWeight: 'bold'
+                }}>
+                    {index + 1}:
+                </span>
+                <input
+                    type="text"
+                    value={filter.query}
+                    onChange={(e) => updateFilter(filter.id, e.target.value)}
+                    placeholder="e.g., tall buildings above 50"
                     style={{
-                        padding: '8px 16px',
-                        backgroundColor: '#007bff',
-                        color: 'white',
-                        border: 'none',
+                        flex: 1,
+                        padding: '6px',
+                        border: '1px solid #ddd',
                         borderRadius: '4px',
-                        cursor: isFiltering ? 'not-allowed' : 'pointer',
-                        fontSize: '14px',
-                        fontWeight: 'bold'
+                        fontSize: '13px',
+                        maxWidth: '100%'
                     }}
-                >
-                    {isFiltering ? 'Filtering...' : 'Apply Filters'}
-                </button>
-                <button
-                    onClick={handleResetFilter}
-                    style={{
-                        padding: '8px 16px',
-                        backgroundColor: '#6c757d',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        fontSize: '14px'
-                    }}
-                >
-                    Reset All
-                </button>
+                    onKeyPress={(e) => e.key === 'Enter' && handleFilter()}
+                />
+                {filters.length > 1 && (
+                    <button
+                        onClick={() => removeFilter(filter.id)}
+                        style={{
+                            padding: '4px 8px',
+                            backgroundColor: '#dc3545',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '3px',
+                            cursor: 'pointer',
+                            fontSize: '12px'
+                        }}
+                    >
+                        ×
+                    </button>
+                )}
             </div>
-            
-            <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
-              Showing {buildings_dict.current.size} buildings total, {highlightedBuildings.length} highlighted
-            </div>
-        <div style={{ fontSize: '11px', color: '#999', marginTop: '4px' }}>
-          Examples: "height above 100", "tall buildings above 50", "ground level above 1049"
+        ))}
+        
+        {/* Action Buttons */}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '10px' }}>
+            <button
+                onClick={addFilter}
+                style={{
+                    padding: '6px 12px',
+                    backgroundColor: '#28a745',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '13px'
+                }}
+            >
+                + Add Filter
+            </button>
+            <button
+                onClick={handleFilter}
+                disabled={isFiltering}
+                style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#007bff',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: isFiltering ? 'not-allowed' : 'pointer',
+                    fontSize: '14px',
+                    fontWeight: 'bold'
+                }}
+            >
+                {isFiltering ? 'Filtering...' : 'Apply Filters'}
+            </button>
+            <button
+                onClick={handleResetFilter}
+                style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#6c757d',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '14px'
+                }}
+            >
+                Reset All
+            </button>
         </div>
         
-        {/* Active Filters Display */}
-        {filters.filter(f => f.query.trim()).length > 0 && (
-          <div style={{ marginTop: '10px', fontSize: '11px' }}>
-            <strong>Active Filters:</strong>
-            {filters.filter(f => f.query.trim()).map((filter, index) => (
-              <div key={filter.id} style={{ 
-                color: '#555', 
-                marginLeft: '10px',
-                padding: '2px 6px',
-                background: `rgba(${index === 0 ? '255,68,68' : index === 1 ? '68,255,68' : index === 2 ? '68,68,255' : '255,255,68'}, 0.2)`,
-                borderRadius: '3px',
-                margin: '2px 0'
-              }}>
-                {index + 1}. {filter.query}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+        <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
+            Showing {buildings_dict.current.size} buildings total, {highlightedBuildings.length} highlighted
+        </div>
+    <div style={{ fontSize: '11px', color: '#999', marginTop: '4px' }}>
+        Examples: "height above 100m", "buildings shorter than 50m", "ground level above sea level"
+    </div>
+    
+    {/* Active Filters Display */}
+    {filters.filter(f => f.query.trim()).length > 0 && (
+        <div style={{ marginTop: '10px', fontSize: '11px' }}>
+        <strong>Active Filters:</strong>
+        {filters.filter(f => f.query.trim()).map((filter, index) => (
+            <div key={filter.id} style={{ 
+            color: '#555', 
+            marginLeft: '10px',
+            padding: '2px 6px',
+            background: `rgba(${index === 0 ? '255,68,68' : index === 1 ? '68,255,68' : index === 2 ? '68,68,255' : '255,255,68'}, 0.2)`,
+            borderRadius: '3px',
+            margin: '2px 0'
+            }}>
+            {index + 1}. {filter.query}
+            </div>
+        ))}
+        </div>
+    )}
+    </div>
 
-      <h1>Flat Map with Buildings</h1>
-      <div
-        ref={mountRef}
-        style={{ width: "100vw", height: "100vh", position: "absolute", zIndex: 0 }}
-      />
-      
-      {/* Building Info Popup */}
-      {selectedBuilding && (
-        <div
-          style={{
+    <div
+    ref={mountRef}
+    style={{ 
+        width: "100vw", 
+        height: "100vh", 
+        position: "absolute", 
+        top: 0,
+        left: 0,
+        margin: 0,
+        padding: 0,
+        zIndex: 0 
+    }}
+    />
+    
+    {/* Building Info Popup */}
+    {selectedBuilding && (
+    <div
+        style={{
+        position: "absolute",
+        left: popupPosition.x + 10,
+        top: popupPosition.y - 10,
+        background: "rgba(255, 255, 255, 0.95)",
+        border: "1px solid #ccc",
+        borderRadius: "8px",
+        padding: "15px",
+        boxShadow: "0 4px 8px rgba(0,0,0,0.2)",
+        maxWidth: "300px",
+        zIndex: 1000,
+        fontSize: "14px",
+        fontFamily: "Arial, sans-serif"
+        }}
+    >
+        <button
+        onClick={() => setSelectedBuilding(null)}
+        style={{
             position: "absolute",
-            left: popupPosition.x + 10,
-            top: popupPosition.y - 10,
-            background: "rgba(255, 255, 255, 0.95)",
-            border: "1px solid #ccc",
-            borderRadius: "8px",
-            padding: "15px",
-            boxShadow: "0 4px 8px rgba(0,0,0,0.2)",
-            maxWidth: "300px",
-            zIndex: 1000,
-            fontSize: "14px",
-            fontFamily: "Arial, sans-serif"
-          }}
+            top: "5px",
+            right: "8px",
+            background: "none",
+            border: "none",
+            fontSize: "16px",
+            cursor: "pointer",
+            color: "#666"
+        }}
         >
-          <button
-            onClick={() => setSelectedBuilding(null)}
+        ×
+        </button>
+        
+        <h3 style={{ margin: "0 0 10px 0", color: "#333" }}>
+        Building Information
+        {selectedBuilding.isHighlighted && (
+            <span style={{ 
+            marginLeft: "10px", 
+            padding: "2px 6px", 
+            background: "#ff4444", 
+            color: "white", 
+            borderRadius: "3px", 
+            fontSize: "10px" 
+            }}>
+            HIGHLIGHTED
+            </span>
+        )}
+        </h3>
+        
+        <div style={{ lineHeight: "1.5" }}>
+        <strong>Ground Elevation:</strong> {
+            selectedBuilding.building.grd_elev_min_z != null 
+            ? Number(selectedBuilding.building.grd_elev_min_z).toFixed(2) + " m"
+            : "N/A"
+        }<br/>
+        <strong>Rooftop Elevation:</strong> {
+            selectedBuilding.building.rooftop_elev_z != null 
+            ? Number(selectedBuilding.building.rooftop_elev_z).toFixed(2) + " m"
+            : "N/A"
+        }<br/>
+        <strong>Height:</strong> {
+            selectedBuilding.building.rooftop_elev_z != null && selectedBuilding.building.grd_elev_min_z != null
+            ? Number(selectedBuilding.building.rooftop_elev_z - selectedBuilding.building.grd_elev_min_z).toFixed(2) + " m"
+            : "N/A"
+        }<br/>
+        {selectedBuilding.coordinates && (
+            <>
+            <strong>Longitude:</strong> {selectedBuilding.coordinates.longitude.toFixed(6)}<br/>
+            <strong>Latitude:</strong> {selectedBuilding.coordinates.latitude.toFixed(6)}<br/>
+            <strong>X (meters):</strong> {selectedBuilding.coordinates.xMeters.toFixed(2)} m<br/>
+            <strong>Y (meters):</strong> {selectedBuilding.coordinates.yMeters.toFixed(2)} m<br/>
+            </>
+        )}
+        {(selectedBuilding.landUse?.lu_code || selectedBuilding.building.land_use?.lu_code) && (
+            <>
+            <strong>Land Use Code:</strong> {selectedBuilding.landUse?.lu_code || selectedBuilding.building.land_use?.lu_code}<br/>
+            {(selectedBuilding.landUse?.description || selectedBuilding.building.land_use?.description) && (
+                <><strong>Land Use:</strong> {selectedBuilding.landUse?.description || selectedBuilding.building.land_use?.description}<br/></>
+            )}
+            {(selectedBuilding.landUse?.major || selectedBuilding.building.land_use?.major) && (
+                <><strong>Category:</strong> {selectedBuilding.landUse?.major || selectedBuilding.building.land_use?.major}<br/></>
+            )}
+            {(selectedBuilding.landUse?.generalize || selectedBuilding.building.land_use?.generalize) && (
+                <><strong>General Type:</strong> {selectedBuilding.landUse?.generalize || selectedBuilding.building.land_use?.generalize}<br/></>
+            )}
+            {(selectedBuilding.landUse?.label || selectedBuilding.building.land_use?.label) && (
+                <><strong>Zone Label:</strong> {selectedBuilding.landUse?.label || selectedBuilding.building.land_use?.label}<br/></>
+            )}
+            {(selectedBuilding.landUse?.lu_bylaw || selectedBuilding.building.land_use?.lu_bylaw) && (
+                <><strong>Bylaw:</strong> {selectedBuilding.landUse?.lu_bylaw || selectedBuilding.building.land_use?.lu_bylaw}<br/></>
+            )}
+            </>
+        )}
+        {/* Debug: Show if no land use found */}
+        {!selectedBuilding.landUse?.lu_code && !selectedBuilding.building.land_use?.lu_code && (
+            <><strong>Land Use:</strong> No zoning data found<br/></>
+        )}
+        </div>
+    </div>
+    )}
+    
+    {/* Save Filters Dialog */}
+    {showSaveDialog && (
+    <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 2000
+    }}>
+        <div style={{
+        background: 'white',
+        padding: '20px',
+        borderRadius: '8px',
+        minWidth: '300px',
+        boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+        }}>
+        <h3 style={{ margin: '0 0 15px 0' }}>Save Filters</h3>
+        <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+            Set Filter Name:
+            </label>
+            <input
+            type="text"
+            value={filterName}
+            onChange={(e) => setFilterName(e.target.value)}
+            placeholder="e.g., Downtown High-rises"
             style={{
-              position: "absolute",
-              top: "5px",
-              right: "8px",
-              background: "none",
-              border: "none",
-              fontSize: "16px",
-              cursor: "pointer",
-              color: "#666"
+                width: '80%',
+                padding: '8px',
+                border: '1px solid #ddd',
+                borderRadius: '4px',
+                fontSize: '14px'
             }}
-          >
-            ×
-          </button>
-          
-          <h3 style={{ margin: "0 0 10px 0", color: "#333" }}>
-            Building Information
-            {selectedBuilding.isHighlighted && (
-              <span style={{ 
-                marginLeft: "10px", 
-                padding: "2px 6px", 
-                background: "#ff4444", 
-                color: "white", 
-                borderRadius: "3px", 
-                fontSize: "10px" 
-              }}>
-                HIGHLIGHTED
-              </span>
-            )}
-          </h3>
-          
-          <div style={{ lineHeight: "1.5" }}>
-            <strong>Ground Elevation:</strong> {
-              selectedBuilding.building.grd_elev_min_z != null 
-                ? Number(selectedBuilding.building.grd_elev_min_z).toFixed(2) + " m"
-                : "N/A"
-            }<br/>
-            <strong>Rooftop Elevation:</strong> {
-              selectedBuilding.building.rooftop_elev_z != null 
-                ? Number(selectedBuilding.building.rooftop_elev_z).toFixed(2) + " m"
-                : "N/A"
-            }<br/>
-            <strong>Height:</strong> {
-              selectedBuilding.building.rooftop_elev_z != null && selectedBuilding.building.grd_elev_min_z != null
-                ? Number(selectedBuilding.building.rooftop_elev_z - selectedBuilding.building.grd_elev_min_z).toFixed(2) + " m"
-                : "N/A"
-            }<br/>
-            {selectedBuilding.coordinates && (
-              <>
-                <strong>Longitude:</strong> {selectedBuilding.coordinates.longitude.toFixed(6)}<br/>
-                <strong>Latitude:</strong> {selectedBuilding.coordinates.latitude.toFixed(6)}<br/>
-                <strong>X (meters):</strong> {selectedBuilding.coordinates.xMeters.toFixed(2)} m<br/>
-                <strong>Y (meters):</strong> {selectedBuilding.coordinates.yMeters.toFixed(2)} m<br/>
-              </>
-            )}
-            {(selectedBuilding.landUse?.lu_code || selectedBuilding.building.land_use?.lu_code) && (
-              <>
-                <strong>Land Use Code:</strong> {selectedBuilding.landUse?.lu_code || selectedBuilding.building.land_use?.lu_code}<br/>
-                {(selectedBuilding.landUse?.description || selectedBuilding.building.land_use?.description) && (
-                  <><strong>Land Use:</strong> {selectedBuilding.landUse?.description || selectedBuilding.building.land_use?.description}<br/></>
-                )}
-                {(selectedBuilding.landUse?.major || selectedBuilding.building.land_use?.major) && (
-                  <><strong>Category:</strong> {selectedBuilding.landUse?.major || selectedBuilding.building.land_use?.major}<br/></>
-                )}
-                {(selectedBuilding.landUse?.generalize || selectedBuilding.building.land_use?.generalize) && (
-                  <><strong>General Type:</strong> {selectedBuilding.landUse?.generalize || selectedBuilding.building.land_use?.generalize}<br/></>
-                )}
-                {(selectedBuilding.landUse?.label || selectedBuilding.building.land_use?.label) && (
-                  <><strong>Zone Label:</strong> {selectedBuilding.landUse?.label || selectedBuilding.building.land_use?.label}<br/></>
-                )}
-                {(selectedBuilding.landUse?.lu_bylaw || selectedBuilding.building.land_use?.lu_bylaw) && (
-                  <><strong>Bylaw:</strong> {selectedBuilding.landUse?.lu_bylaw || selectedBuilding.building.land_use?.lu_bylaw}<br/></>
-                )}
-              </>
-            )}
-            {/* Debug: Show if no land use found */}
-            {!selectedBuilding.landUse?.lu_code && !selectedBuilding.building.land_use?.lu_code && (
-              <><strong>Land Use:</strong> No zoning data found<br/></>
-            )}
-          </div>
+            onKeyPress={(e) => e.key === 'Enter' && handleSaveFilters()}
+            />
         </div>
-      )}
-      
-      {/* Save Filters Dialog */}
-      {showSaveDialog && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.5)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 2000
-        }}>
-          <div style={{
-            background: 'white',
-            padding: '20px',
-            borderRadius: '8px',
-            minWidth: '300px',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
-          }}>
-            <h3 style={{ margin: '0 0 15px 0' }}>Save Filters</h3>
-            <div style={{ marginBottom: '15px' }}>
-              <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-                Filter Set Name:
-              </label>
-              <input
-                type="text"
-                value={filterName}
-                onChange={(e) => setFilterName(e.target.value)}
-                placeholder="e.g., Downtown High-rises"
-                style={{
-                  width: '100%',
-                  padding: '8px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px',
-                  fontSize: '14px'
-                }}
-                onKeyPress={(e) => e.key === 'Enter' && handleSaveFilters()}
-              />
-            </div>
-            <div style={{ marginBottom: '15px', fontSize: '12px', color: '#666' }}>
-              Username: <strong>{username}</strong>
-            </div>
-            <div style={{ marginBottom: '15px', fontSize: '12px', color: '#666' }}>
-              Active Filters: {filters.filter(f => f.query.trim()).length}
-            </div>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button
-                onClick={handleSaveFilters}
-                disabled={isSaving || !filterName.trim()}
-                style={{
-                  flex: 1,
-                  padding: '10px',
-                  backgroundColor: isSaving || !filterName.trim() ? '#ccc' : '#007bff',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: isSaving || !filterName.trim() ? 'not-allowed' : 'pointer'
-                }}
-              >
-                {isSaving ? 'Saving...' : 'Save'}
-              </button>
-              <button
-                onClick={() => {
-                  setShowSaveDialog(false);
-                  setFilterName('');
-                }}
-                style={{
-                  flex: 1,
-                  padding: '10px',
-                  backgroundColor: '#6c757d',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
+        <div style={{ marginBottom: '15px', fontSize: '12px', color: '#666' }}>
+            Username: <strong>{username}</strong>
         </div>
-      )}
+        <div style={{ marginBottom: '15px', fontSize: '12px', color: '#666' }}>
+            Active Filters: {filters.filter(f => f.query.trim()).length}
+        </div>
+        <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+            onClick={handleSaveFilters}
+            disabled={isSaving || !filterName.trim()}
+            style={{
+                flex: 1,
+                padding: '10px',
+                backgroundColor: isSaving || !filterName.trim() ? '#ccc' : '#007bff',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: isSaving || !filterName.trim() ? 'not-allowed' : 'pointer'
+            }}
+            >
+            {isSaving ? 'Saving...' : 'Save'}
+            </button>
+            <button
+            onClick={() => {
+                setShowSaveDialog(false);
+                setFilterName('');
+            }}
+            style={{
+                flex: 1,
+                padding: '10px',
+                backgroundColor: '#6c757d',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer'
+            }}
+            >
+            Cancel
+            </button>
+        </div>
+        </div>
+    </div>
+    )}
 
-      {/* Load Filters Dialog */}
-      {showLoadDialog && (
+    {/* Load Filters Dialog */}
+    {showLoadDialog && (
+    <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 2000
+    }}>
         <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.5)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 2000
+        background: 'white',
+        padding: '20px',
+        borderRadius: '8px',
+        minWidth: '400px',
+        maxHeight: '80vh',
+        overflowY: 'auto',
+        boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
         }}>
-          <div style={{
-            background: 'white',
-            padding: '20px',
-            borderRadius: '8px',
-            minWidth: '400px',
-            maxHeight: '80vh',
-            overflowY: 'auto',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
-          }}>
-            <h3 style={{ margin: '0 0 15px 0' }}>Load Filters</h3>
-            <div style={{ marginBottom: '15px', fontSize: '12px', color: '#666' }}>
-              Username: <strong>{username}</strong>
-            </div>
+        <h3 style={{ margin: '0 0 15px 0' }}>Load Filters</h3>
+        <div style={{ marginBottom: '15px', fontSize: '12px', color: '#666' }}>
+            Username: <strong>{username}</strong>
+        </div>
             
             {savedFilters.length === 0 ? (
               <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>

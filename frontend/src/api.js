@@ -25,7 +25,7 @@ export const fetchBuildings = async () => {
 
 export const fetchLandUse = async (longitude, latitude) => {
   try {
-        const response = await fetch(`http://localhost:5050/api/land-use?lng=${longitude}&lat=${latitude}`);
+        const response = await fetch(`${API_URL}/land-use?lng=${longitude}&lat=${latitude}`);
         const data = await response.json();
         
         if (data.status === 'success') {
