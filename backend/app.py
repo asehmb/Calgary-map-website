@@ -143,7 +143,7 @@ app = Flask(__name__)
 
 # Configure CORS - Allow all origins for Render deployment
 # This is needed because Render can assign different subdomains
-CORS(app, origins=["https://calgary-map-frontend.onrender.com", "https://localhost:3000"], supports_credentials=True)
+CORS(app, origins=["https://calgary-map-frontend.onrender.com", "localhost:3000"], supports_credentials=True)
 
 # API Configuration from environment variables
 CALGARY_LAND_USE_API = os.getenv('CALGARY_LAND_USE_API', 'https://data.calgary.ca/resource/mw9j-jik5.json')
