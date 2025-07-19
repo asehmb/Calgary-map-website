@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5050/api"; // Use env var for production
+const API_URL = process.env.REACT_APP_API_URL; // set correct backend URL in .env file
 
 export const fetchBuildings = async () => {
   const res = await axios.get(`${API_URL}/buildings-with-land-use`);
