@@ -1,5 +1,6 @@
 
 
+
 all: flask dev
 
 flask:
@@ -7,3 +8,7 @@ flask:
 
 dev:
 	cd frontend && npm start
+
+setup:
+	cd backend && pip install -r requirements.txt
+	cd frontend && npm install

@@ -50,11 +50,13 @@ create a venv environment in backend by:
 -python3 -m venv .venv
 -source .venv/bin/activate -- assuming MacOs or linux
 
-run pip install requirements.txt
+run pip install requirements.txt / or run make setup
 
 do cd .. to return to the main directory
 run make flask
-in another terminal, run make dev
+in another terminal, run npm install
+do cd .. to return to the main directory / or run make setup
+run make dev
 in a web browser, open `http://localhost:3000`
 A dev environment should be set up now!
 
