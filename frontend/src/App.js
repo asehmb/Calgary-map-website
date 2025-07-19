@@ -265,7 +265,7 @@ function App() {
 
         const gridHelper = new THREE.GridHelper(700, 50);
         gridHelper.rotation.x = Math.PI / 2;
-        gridHelper.position.set(0, 0, 0);
+        gridHelper.position.set(0, 0, -1);
         scene.add(gridHelper);
 
         // Animation loop
@@ -294,7 +294,7 @@ function App() {
       // Add grid helper back after clearing
       const gridHelper = new THREE.GridHelper(700, 50);
       gridHelper.rotation.x = Math.PI / 2;
-      gridHelper.position.set(0, 0, -15);
+      gridHelper.position.set(0, 0, -1);
 
       sceneRef.current.add(gridHelper);
 
