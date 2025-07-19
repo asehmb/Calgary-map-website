@@ -124,3 +124,5 @@ the dashboard and visit the link
 Mine for example is [https://calgary-map-website.onrender.com](https://calgary-map-website.onrender.com)
 after visitng render will automatically start loading up the backend and you can
 continue to use the app normally
+if mine still doesnt display the buildings after starting the backend,
+Please send me an email and ill restart it
