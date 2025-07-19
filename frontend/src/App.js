@@ -263,7 +263,7 @@ function App() {
 
         window.addEventListener('resize', handleResize);
 
-        const gridHelper = new THREE.GridHelper(500, 50);
+        const gridHelper = new THREE.GridHelper(700, 50);
         gridHelper.rotation.x = Math.PI / 2;
         gridHelper.position.set(0, 0, 0);
         scene.add(gridHelper);
@@ -292,7 +292,7 @@ function App() {
         sceneRef.current.remove(sceneRef.current.children[0]);
       }
       // Add grid helper back after clearing
-      const gridHelper = new THREE.GridHelper(500, 50);
+      const gridHelper = new THREE.GridHelper(700, 50);
       gridHelper.rotation.x = Math.PI / 2;
       gridHelper.position.set(0, 0, -15);
 
